@@ -102,9 +102,13 @@ export function montarCampos(contenedor, slug, ejercicioRutina, unidad) {
 // the "done" class toggled (render.js passes the <li> itself), so the
 // strike-through styling in estilos.css (li.ex.done .ex-name) applies for
 // free. Unchecking never touches pesoKg/series/reps — only `hecho` and
-// `fecha` change.
+// `fecha` change. Same failure handling as montarCampos: a failed write
+// shows `aviso` and, since nothing actually persisted, reconciles both the
+// checkbox and the strike-through with what's really on disk instead of
+// leaving them showing the tap the user just made.
 export function montarPalomita(contenedor, slug) {
   const registro = registroDeHoy(slug);
+  const aviso = crearAviso();
 
   const wrap = document.createElement("span");
   wrap.className = "check-wrap";
@@ -116,12 +120,16 @@ export function montarPalomita(contenedor, slug) {
   contenedor.classList.toggle("done", input.checked);
 
   input.addEventListener("change", () => {
-    actualizarRegistroDeHoy(slug, { hecho: input.checked });
-    contenedor.classList.toggle("done", input.checked);
+    const deseado = input.checked;
+    const ok = actualizarRegistroDeHoy(slug, { hecho: deseado }, aviso);
+    const hechoReal = ok ? deseado : !!registroDeHoy(slug).hecho;
+    input.checked = hechoReal;
+    contenedor.classList.toggle("done", hechoReal);
   });
 
   wrap.appendChild(input);
   contenedor.prepend(wrap);
+  contenedor.appendChild(aviso);
   return input;
 }
 
@@ -202,30 +210,42 @@ function notifyRestDone(ctx) {
   } catch (_) {}
 }
 
-// Draws the rest-timer button and appends it to `contenedor`. Idle state
-// shows the mm:ss for `segundos` (the label text itself isn't passed in —
-// the interface only carries the parsed duration); clicking starts a
-// countdown, clicking again cancels it, and reaching zero beeps, vibrates
-// and shows "¡Listo!" for 2.5s before reverting to idle — identical to the
-// pre-split monolith's rest button.
-export function montarTemporizador(contenedor, segundos) {
+// Draws the rest-timer widget and appends it to `contenedor`. `etiqueta`
+// is the original plan text (e.g. "30-45 seg", "Sin descanso") and is what
+// idle state shows — matching the pre-split monolith, so a range doesn't
+// collapse into a single mm:ss guess; only a running/finishing countdown
+// switches to mm:ss. `segundos` is the parsed duration: falsy (e.g.
+// "Sin descanso", or free text with no digits) draws a static box with no
+// button — there's nothing to count down — same as the monolith did.
+// Clicking the button starts a countdown, clicking again cancels it, and
+// reaching zero beeps, vibrates and shows "¡Listo!" for 2.5s before
+// reverting to idle.
+export function montarTemporizador(contenedor, segundos, etiqueta) {
   const wrap = document.createElement("span");
   wrap.className = "plate-wrap";
 
-  const idleTexto = formatMMSS(segundos);
   const span = document.createElement("span");
   span.className = "n";
-  span.textContent = idleTexto;
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "plate plate--rest";
-  btn.setAttribute("aria-label", `Iniciar descanso de ${idleTexto}`);
-  btn.appendChild(span);
+  span.textContent = etiqueta;
 
   const cap = document.createElement("span");
   cap.className = "plate-cap";
   cap.textContent = "descanso";
+
+  if (!segundos) {
+    const estatico = document.createElement("span");
+    estatico.className = "plate plate--rest plate--static";
+    estatico.appendChild(span);
+    wrap.append(estatico, cap);
+    contenedor.appendChild(wrap);
+    return null;
+  }
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "plate plate--rest";
+  btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta}`);
+  btn.appendChild(span);
 
   let timerId = null;
   btn.addEventListener("click", () => {
@@ -234,8 +254,8 @@ export function montarTemporizador(contenedor, segundos) {
       activeTimers = activeTimers.filter((id) => id !== timerId);
       timerId = null;
       btn.classList.remove("running", "done");
-      span.textContent = idleTexto;
-      btn.setAttribute("aria-label", `Iniciar descanso de ${idleTexto}`);
+      span.textContent = etiqueta;
+      btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta}`);
       return;
     }
     const ctx = ensureAudio();
@@ -256,8 +276,8 @@ export function montarTemporizador(contenedor, segundos) {
         notifyRestDone(ctx);
         setTimeout(() => {
           btn.classList.remove("done");
-          span.textContent = idleTexto;
-          btn.setAttribute("aria-label", `Iniciar descanso de ${idleTexto}`);
+          span.textContent = etiqueta;
+          btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta}`);
         }, 2500);
       } else {
         span.textContent = formatMMSS(restante);

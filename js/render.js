@@ -129,8 +129,11 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   // registro.js que conozca la estructura del panel.
   montarPalomita(li, ejercicioRutina.slug);
 
-  const segundos = parseRestSeconds(ejercicioRutina.descanso || "60 seg");
-  if (segundos) montarTemporizador(li, segundos);
+  // Always drawn, even with no numeric duration ("Sin descanso") — the
+  // widget itself decides button vs. static box; see montarTemporizador.
+  const etiquetaDescanso = ejercicioRutina.descanso || "60 seg";
+  const segundos = parseRestSeconds(etiquetaDescanso);
+  montarTemporizador(li, segundos, etiquetaDescanso);
 
   const body = document.createElement("div");
   body.className = "ex-body";
@@ -176,13 +179,13 @@ function pintarInfoEjercicio(ejercicioRutina, cat, unidad) {
     frag.appendChild(sub);
   }
 
-  const notas = [];
-  if (ejercicioRutina.nota) notas.push(ejercicioRutina.nota);
-  if (ejercicioRutina.descanso) notas.push(`Descanso: ${ejercicioRutina.descanso}`);
-  if (notas.length) {
+  // El descanso ya no se repite aquí como texto: el recuadro de la
+  // palomita/temporizador (ver pintarEjercicio) muestra la misma etiqueta
+  // en su propio recuadro — una sola representación por dato.
+  if (ejercicioRutina.nota) {
     const nota = document.createElement("div");
     nota.className = "ex-note";
-    nota.textContent = notas.join(" · ");
+    nota.textContent = ejercicioRutina.nota;
     frag.appendChild(nota);
   }
 
