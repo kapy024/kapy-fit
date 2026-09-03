@@ -15,7 +15,8 @@
 <script type="module">
   import { correr } from "./js/pruebas.js";
   await import("./js/unidades.test.js");
-  correr();
+  await import("./js/pruebas.test.js");
+  await correr();
 </script>
 </body>
 </html>
