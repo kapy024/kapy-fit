@@ -91,6 +91,33 @@
     font-size:14.5px;
     max-width:56ch;
   }
+  .unidad{
+    display:inline-flex;
+    gap:2px;
+    margin-top:12px;
+  }
+  .unidad-btn{
+    font:600 13px/1 "Public Sans", system-ui, sans-serif;
+    padding:7px 14px;
+    cursor:pointer;
+    border:1px solid var(--border);
+    background:var(--surface);
+    color:var(--text-dim);
+  }
+  .unidad-btn:first-child{border-radius:8px 0 0 8px}
+  .unidad-btn:last-child{border-radius:0 8px 8px 0}
+  .unidad-btn[aria-pressed="true"]{
+    background:var(--accent);
+    color:var(--accent-ink);
+    border-color:var(--accent);
+  }
+  .aviso{
+    border:1px solid var(--border);
+    background:var(--surface-2);
+    border-radius:12px;
+    padding:14px 16px;
+    margin-bottom:18px;
+  }
 
   nav.days{
     display:flex;

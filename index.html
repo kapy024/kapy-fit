@@ -14,6 +14,11 @@
     <span class="eyebrow">Bitácora personal</span>
     <h1>Registro de Hierro</h1>
     <p>Tu rutina completa, centralizada en un solo lugar. Anota el peso, las series y las reps que hiciste hoy, marca el ejercicio al terminarlo y revisa tu historial — todo se guarda en este dispositivo.</p>
+    <div class="unidad" role="group" aria-label="Unidad de peso">
+      <button type="button" id="btnKg" class="unidad-btn" aria-pressed="true">kg</button>
+      <button type="button" id="btnLb" class="unidad-btn" aria-pressed="false">lb</button>
+    </div>
+    <span id="unidadWarn" class="save-warn" hidden>No se guardó la preferencia (almacenamiento lleno)</span>
   </header>
 
   <nav class="days" id="dayNav" role="tablist" aria-label="Días de rutina"></nav>
