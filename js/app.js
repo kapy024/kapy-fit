@@ -6,6 +6,7 @@ import {
   ultimoReinicio
 } from "./almacen.js";
 import { hayDatosViejos, analizar, importar } from "./migracion.js";
+import { montarSesion } from "./sesion-ui.js";
 
 const nav = document.getElementById("dayNav");
 const panels = document.getElementById("panels");
@@ -133,6 +134,7 @@ function pintarAvisoMigracion() {
   else pintarBanner();
 }
 
+montarSesion(document.getElementById("sesionSlot"));
 pintarAvisoMigracion();
 pintarUltimoReinicio();
 refrescar();
