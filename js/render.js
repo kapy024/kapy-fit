@@ -10,9 +10,9 @@ import { urlCalendario, textoICS, nombreArchivoICS } from "./calendario.js";
 import { formatear } from "./unidades.js";
 import {
   montarCampos, montarPalomita, montarTemporizador,
-  parseRestSeconds, clearAllTimers
+  parseRestSeconds, clearAllTimers, crearAviso
 } from "./registro.js";
-import { montarImagen } from "./imagenes.js";
+import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
 
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
@@ -27,10 +27,19 @@ function escaparHtml(s) {
 // caller that restores a saved day on startup (no click involved) still
 // gets the right pill marked aria-selected on the very first paint.
 export function pintarNav(contenedor, diaActivo, alSeleccionar) {
+  // A keyboard/VoiceOver user who just activated a pill has focus inside
+  // `contenedor` right up until innerHTML = "" below destroys it — without
+  // restoring it afterwards, focus silently falls back to <body> on every
+  // single day change.
+  const teniaFoco = contenedor.contains(document.activeElement);
   contenedor.innerHTML = "";
   RUTINA.forEach((d) => {
     contenedor.appendChild(pintarPestana(d, diaActivo, alSeleccionar));
   });
+  if (teniaFoco) {
+    const activa = contenedor.querySelector('[aria-selected="true"]');
+    if (activa) activa.focus();
+  }
 }
 
 // Which block (variant) of each day is on screen, remembered for as long as
@@ -51,15 +60,29 @@ export function pintarDia(contenedor, claveDia, unidad) {
   // A running rest timer holds a setInterval closure over nodes that are
   // about to be detached by innerHTML = "" below — without this sweep,
   // switching day tabs mid-countdown leaks an interval that keeps firing
-  // against detached elements forever.
+  // against detached elements forever. Same story for the exercise-image
+  // IntersectionObservers: each one keeps watching a detached <img> unless
+  // it's disconnected first.
   clearAllTimers();
+  detenerTodasLasImagenes();
+  // The variant selector rebuilds through this same function (see
+  // `repintar` below) — a chip click leaves focus on a `.chip-btn` that
+  // innerHTML = "" is about to destroy, same problem pintarNav has with the
+  // day pills.
+  const teniaFocoVariante =
+    document.activeElement?.classList?.contains("chip-btn") &&
+    contenedor.contains(document.activeElement);
   contenedor.innerHTML = "";
   const d = dia(claveDia);
   // Redrawing the whole day is how a variant change takes effect: the same
   // path a day-tab click takes, so there is only one render path to reason
-  // about (and the timer sweep above runs for free).
+  // about (and the timer/observer sweeps above run for free).
   const repintar = () => pintarDia(contenedor, claveDia, unidad);
   contenedor.appendChild(pintarPanel(d, unidad, repintar));
+  if (teniaFocoVariante) {
+    const activa = contenedor.querySelector('.chip-btn[aria-selected="true"]');
+    if (activa) activa.focus();
+  }
 }
 
 function pintarPestana(d, diaActivo, alSeleccionar) {
@@ -174,23 +197,29 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   const li = document.createElement("li");
   li.className = "ex";
 
+  // One save-warning per row, shared by the checkbox and the peso/series/
+  // reps fields — appended once, below, instead of each control drawing
+  // (and showing) its own.
+  const aviso = crearAviso();
+
   // La palomita va primero: pinta sobre `li` mismo para poder alternar la
   // clase "done" (tachado del nombre, ver estilos.css) sin pedirle a
   // registro.js que conozca la estructura del panel.
-  montarPalomita(li, ejercicioRutina);
+  montarPalomita(li, ejercicioRutina, cat.nombre, aviso);
 
   // Always drawn, even with no numeric duration ("Sin descanso") — the
   // widget itself decides button vs. static box; see montarTemporizador.
   const etiquetaDescanso = ejercicioRutina.descanso || "60 seg";
   const segundos = parseRestSeconds(etiquetaDescanso);
-  montarTemporizador(li, segundos, etiquetaDescanso);
+  montarTemporizador(li, segundos, etiquetaDescanso, cat.nombre);
 
   const body = document.createElement("div");
   body.className = "ex-body";
   body.appendChild(pintarInfoEjercicio(ejercicioRutina, cat, unidad));
   montarImagen(body, ejercicioRutina.slug, cat);
-  montarCampos(body, ejercicioRutina, unidad);
+  montarCampos(body, ejercicioRutina, unidad, aviso);
   li.appendChild(body);
+  li.appendChild(aviso);
 
   // Sin video verificado (p.ej. aduccion-cadera): no se dibuja el botón.
   if (cat.video) {

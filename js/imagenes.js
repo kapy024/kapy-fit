@@ -3,6 +3,22 @@
 // phone is a battery problem, not a rendering one.
 const MS_POR_FOTOGRAMA = 800;
 
+// Every IntersectionObserver (and its associated stop-the-interval callback)
+// created by montarImagen, so a day-tab switch can sweep them all — same
+// reason registro.js's clearAllTimers() exists. Without this, switching
+// days over and over never disconnects the observers watching the <img>
+// nodes that innerHTML = "" just detached, and they keep accumulating for
+// the life of the page.
+let observadoresActivos = [];
+
+export function detenerTodasLasImagenes() {
+  observadoresActivos.forEach(({ observador, parar }) => {
+    observador.disconnect();
+    parar();
+  });
+  observadoresActivos = [];
+}
+
 export function montarImagen(contenedor, slug, ejercicio) {
   if (!ejercicio.imagenInicio || !ejercicio.imagenFin) return;
 
@@ -41,4 +57,5 @@ export function montarImagen(contenedor, slug, ejercicio) {
   }, { threshold: 0.1 });
 
   observador.observe(img);
+  observadoresActivos.push({ observador, parar });
 }
