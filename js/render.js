@@ -8,6 +8,10 @@ import { ejercicio } from "./catalogo.js";
 import { hoyISO } from "./almacen.js";
 import { urlCalendario, textoICS, nombreArchivoICS } from "./calendario.js";
 import { formatear } from "./unidades.js";
+import {
+  montarCampos, montarPalomita, montarTemporizador,
+  parseRestSeconds, clearAllTimers
+} from "./registro.js";
 
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
@@ -29,6 +33,11 @@ export function pintarNav(contenedor, diaActivo, alSeleccionar) {
 }
 
 export function pintarDia(contenedor, claveDia, unidad) {
+  // A running rest timer holds a setInterval closure over nodes that are
+  // about to be detached by innerHTML = "" below — without this sweep,
+  // switching day tabs mid-countdown leaks an interval that keeps firing
+  // against detached elements forever.
+  clearAllTimers();
   contenedor.innerHTML = "";
   const d = dia(claveDia);
   contenedor.appendChild(pintarPanel(d, unidad));
@@ -115,9 +124,18 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   const li = document.createElement("li");
   li.className = "ex";
 
+  // La palomita va primero: pinta sobre `li` mismo para poder alternar la
+  // clase "done" (tachado del nombre, ver estilos.css) sin pedirle a
+  // registro.js que conozca la estructura del panel.
+  montarPalomita(li, ejercicioRutina.slug);
+
+  const segundos = parseRestSeconds(ejercicioRutina.descanso || "60 seg");
+  if (segundos) montarTemporizador(li, segundos);
+
   const body = document.createElement("div");
   body.className = "ex-body";
-  body.appendChild(montarCampos(ejercicioRutina, cat, unidad));
+  body.appendChild(pintarInfoEjercicio(ejercicioRutina, cat, unidad));
+  montarCampos(body, ejercicioRutina.slug, ejercicioRutina, unidad);
   li.appendChild(body);
 
   // Sin video verificado (p.ej. aduccion-cadera): no se dibuja el botón.
@@ -134,9 +152,11 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   return li;
 }
 
-// Builds the name/sets-reps/weight/note block for one exercise. `unidad`
-// only affects how pesoKg is displayed here — storage always stays kg.
-function montarCampos(ejercicioRutina, cat, unidad) {
+// Builds the name/sets-reps/weight/note block for one exercise — the plan's
+// baseline data, read-only. `unidad` only affects how pesoKg is displayed
+// here — storage always stays kg. The actual capture inputs (peso/series/
+// reps typed today) are drawn separately by registro.js's montarCampos.
+function pintarInfoEjercicio(ejercicioRutina, cat, unidad) {
   const frag = document.createDocumentFragment();
 
   const nombre = document.createElement("div");

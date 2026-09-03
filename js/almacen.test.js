@@ -3,6 +3,7 @@ import {
   guardarRegistro, historial, registroDe,
   preferencias, guardarPreferencias, LLAVE_REGISTROS, LLAVE_PREFS
 } from "./almacen.js";
+import { aKg } from "./unidades.js";
 
 function limpiar() {
   localStorage.removeItem(LLAVE_REGISTROS);
@@ -96,4 +97,14 @@ test("guardarRegistro reemplaza el registro por completo, no hace merge", () => 
   guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true });
   guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 22, series: 3, reps: "8", hecho: false });
   assertEq(registroDe("sentadilla", "2026-09-02"), { fecha: "2026-09-02", pesoKg: 22, series: 3, reps: "8", hecho: false });
+});
+
+test("un peso capturado en libras se guarda en kilos", () => {
+  limpiar();
+  const capturado = 100;                       // el usuario escribió 100
+  guardarRegistro("sentadilla", {
+    fecha: "2026-09-02", pesoKg: aKg(capturado, "lb"),
+    series: 4, reps: "10", hecho: true
+  });
+  assertEq(registroDe("sentadilla", "2026-09-02").pesoKg, 45.4);
 });
