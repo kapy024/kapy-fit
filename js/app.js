@@ -10,7 +10,7 @@ let diaActivo = RUTINA[0].clave;
 let unidad = preferencias().unidad;
 
 function refrescar() {
-  pintarNav(nav, seleccionar);
+  pintarNav(nav, diaActivo, seleccionar);
   pintarDia(panels, diaActivo, unidad);
 }
 

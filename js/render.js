@@ -12,38 +12,35 @@ import { formatear } from "./unidades.js";
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
 
-// Tracks which day's pill should render aria-selected="true". pintarNav has
-// no active-day parameter (see brief), so pintarDia — which does receive
-// the active day from js/app.js — is the one source of truth for it.
-let diaSeleccionado = RUTINA[0].clave;
-
 function escaparHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 }
 
-export function pintarNav(contenedor, alSeleccionar) {
+// `diaActivo` is taken explicitly instead of read off module state, so a
+// caller that restores a saved day on startup (no click involved) still
+// gets the right pill marked aria-selected on the very first paint.
+export function pintarNav(contenedor, diaActivo, alSeleccionar) {
   contenedor.innerHTML = "";
   RUTINA.forEach((d) => {
-    contenedor.appendChild(pintarPestana(d, alSeleccionar));
+    contenedor.appendChild(pintarPestana(d, diaActivo, alSeleccionar));
   });
 }
 
 export function pintarDia(contenedor, claveDia, unidad) {
-  diaSeleccionado = claveDia;
   contenedor.innerHTML = "";
   const d = dia(claveDia);
   contenedor.appendChild(pintarPanel(d, unidad));
 }
 
-function pintarPestana(d, alSeleccionar) {
+function pintarPestana(d, diaActivo, alSeleccionar) {
   const esDescanso = d.bloques.length === 0;
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "pill" + (esDescanso ? " pill--rest" : "");
   btn.setAttribute("role", "tab");
-  btn.setAttribute("aria-selected", d.clave === diaSeleccionado ? "true" : "false");
+  btn.setAttribute("aria-selected", d.clave === diaActivo ? "true" : "false");
 
   const etiqueta = document.createElement("span");
   etiqueta.className = "pill-label";
@@ -54,10 +51,7 @@ function pintarPestana(d, alSeleccionar) {
   enfoque.textContent = d.enfoque;
 
   btn.append(etiqueta, enfoque);
-  btn.addEventListener("click", () => {
-    diaSeleccionado = d.clave;
-    alSeleccionar(d.clave);
-  });
+  btn.addEventListener("click", () => alSeleccionar(d.clave));
   return btn;
 }
 
@@ -187,7 +181,10 @@ function formatearLinea(ejercicioRutina, cat, unidad) {
 // One Calendar / .ics pair per block, matching calendario.js's contract of
 // one `entrada` per (dia, bloque). The Calendar link is a real anchor —
 // never a <button> calling window.open(), which is the bug this task
-// exists to fix. The .ics link is a client-built blob: URL.
+// exists to fix. The .ics link is a data: URI, not a blob: URL: the file
+// is a few lines of text, so encoding it inline needs no createObjectURL
+// (and therefore no matching revokeObjectURL) and can't accumulate across
+// re-renders — which matters here since a phone user retaps day tabs a lot.
 function pintarAcciones(d, bloque, unidad, fecha) {
   const div = document.createElement("div");
   div.className = "panel-meta";
@@ -205,7 +202,7 @@ function pintarAcciones(d, bloque, unidad, fecha) {
 
   const icsBtn = document.createElement("a");
   icsBtn.className = "cal-btn";
-  icsBtn.href = URL.createObjectURL(new Blob([textoICS(entrada)], { type: "text/calendar" }));
+  icsBtn.href = `data:text/calendar;charset=utf-8,${encodeURIComponent(textoICS(entrada))}`;
   icsBtn.download = nombreArchivoICS(d, fecha);
   icsBtn.textContent = "Descargar .ics";
   div.appendChild(icsBtn);
