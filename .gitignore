@@ -2,3 +2,6 @@
 # Credenciales locales: la anon key se commitea hasta la entrega 2,
 # junto con las políticas RLS que la hacen segura.
 config.local.js
+.superpowers/
+.claude/
+.claude-flow/
