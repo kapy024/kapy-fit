@@ -98,7 +98,10 @@
   }
   .unidad-btn{
     font:600 13px/1 "Public Sans", system-ui, sans-serif;
-    padding:7px 14px;
+    /* Extra vertical padding over the old 7px keeps the tap target clearly
+       past the WCAG 2.2 AA 24px floor even if a fallback font renders a
+       touch shorter than Public Sans. */
+    padding:9px 14px;
     cursor:pointer;
     border:1px solid var(--border);
     background:var(--surface);
@@ -118,6 +121,7 @@
     padding:14px 16px;
     margin-bottom:18px;
   }
+  .aviso .reset-btn{margin-left:8px}
 
   nav.days{
     display:flex;
@@ -295,9 +299,25 @@
   li.ex:last-child{border-bottom:none}
   li.ex.done .ex-name{color:var(--text-dim); text-decoration:line-through; text-decoration-color:var(--moss); text-decoration-thickness:1.5px}
 
-  .check-wrap{flex:0 0 auto}
+  /* .check-wrap is a <label> wrapping .check (see registro.js): sizing it
+     to 24×24 while the checkbox it draws stays 22×22 grows the tap target
+     to the WCAG 2.2 AA minimum without changing what's on screen — a click
+     anywhere in the label reaches the input natively. */
+  .check-wrap{
+    flex:0 0 auto;
+    width:24px;height:24px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+  }
   .check{
     appearance:none;
+    /* flex-shrink:0 — without it Chromium's flex auto-minimum-size for a
+       checkbox clamps the *width* alone below the 22px set here (height is
+       unaffected), now that .check-wrap is a flex container; verified via
+       getBoundingClientRect() while wiring up the bigger tap target. */
+    flex-shrink:0;
     width:22px;height:22px;
     border-radius:6px;
     border:2px solid var(--border);
@@ -562,7 +582,10 @@
     .plate-cap{font-size:8px}
     .tech-link span.lbl{display:none}
     .tech-link{padding:8px}
-    .f-input{width:48px; font-size:12px; padding:5px 6px}
+    /* 16px, not smaller: below that, iOS Safari zooms in on focus and
+       never zooms back out — and this is the field tapped every single
+       set. */
+    .f-input{width:48px; font-size:16px; padding:5px 6px}
     .f-input.f-r{width:88px}
     .ex-track{gap:8px 10px}
   }
