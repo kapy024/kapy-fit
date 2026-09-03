@@ -40,6 +40,13 @@ function actualizarRegistroDeHoy(slot, slug, cambios, avisoEl) {
     if (ok) ocultarAviso(avisoEl);
     else mostrarAviso(avisoEl, "No se guardó (almacenamiento lleno)");
   }
+  // Lets every history panel showing this exercise refresh itself: the same
+  // slug can sit in several rows of the day.
+  if (ok) {
+    document.dispatchEvent(
+      new CustomEvent("registro-guardado", { detail: { slot, slug } })
+    );
+  }
   return ok;
 }
 
@@ -409,24 +416,24 @@ function formatearFechaCorta(fechaISO) {
 // exercises doesn't pay to compute history nobody looks at.
 export function montarHistorial(contenedor, ejercicioRutina, unidad) {
   const { slug } = ejercicioRutina;
-  const registros = historial(slug);
 
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "hist-toggle";
   const contador = document.createElement("span");
   contador.className = "hc";
-  contador.textContent = `(${registros.length})`;
   toggle.append("Historial ", contador);
 
   const panel = document.createElement("div");
   panel.className = "hist-panel";
   panel.hidden = true;
 
-  let dibujado = false;
+  // Re-read on every open instead of caching at draw time: a set logged
+  // after the row was painted must show up without reloading the page.
   function dibujarPanel() {
-    if (dibujado) return;
-    dibujado = true;
+    const registros = historial(slug);
+    contador.textContent = `(${registros.length})`;
+    panel.innerHTML = "";
     if (registros.length === 0) {
       panel.innerHTML =
         '<div class="hist-empty">Aún no hay registros guardados. Se guardan cuando marcas el ejercicio como hecho.</div>';
@@ -452,6 +459,17 @@ export function montarHistorial(contenedor, ejercicioRutina, unidad) {
   toggle.addEventListener("click", () => {
     panel.hidden = !panel.hidden;
     if (!panel.hidden) dibujarPanel();
+  });
+
+  // Keep the count honest while the row is on screen, and refresh an
+  // already-open panel when this exercise gets logged from another row.
+  function refrescarContador() {
+    contador.textContent = `(${historial(slug).length})`;
+    if (!panel.hidden) dibujarPanel();
+  }
+  refrescarContador();
+  document.addEventListener("registro-guardado", (e) => {
+    if (e.detail && e.detail.slug === slug) refrescarContador();
   });
 
   contenedor.append(toggle, panel);
