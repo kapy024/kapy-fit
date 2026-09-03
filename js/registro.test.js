@@ -4,13 +4,21 @@
 // dispatch a plain Event, both of which real elements support too, so
 // nothing here is Node-only.
 import { test, assertEq } from "./pruebas.js";
-import { montarCampos, montarPalomita, montarTemporizador, parseRestSeconds } from "./registro.js";
+import {
+  montarCampos, montarPalomita, montarTemporizador, parseRestSeconds, crearAviso
+} from "./registro.js";
 import { guardarRegistro, registroDe, hoyISO, LLAVE_REGISTROS } from "./almacen.js";
 
 // montarCampos/montarPalomita reciben el renglón de la rutina completo
 // (slot + slug) en vez de un slug suelto: el slot es la llave del almacén y
 // el slug viaja dentro del registro. Las pruebas de abajo se adaptaron a esa
 // firma; lo que verifican no cambió.
+//
+// montarPalomita también recibe ahora el nombre del ejercicio (para el
+// aria-label, ver render.js) y el `aviso` compartido con montarCampos en
+// vez de crear el suyo propio — las pruebas de la palomita que revisan el
+// aviso ya no lo buscan dentro del <li>, lo crean con crearAviso() y lo
+// pasan directo, como hace render.js.
 
 function limpiar() {
   localStorage.removeItem(LLAVE_REGISTROS);
@@ -32,10 +40,6 @@ function buscar(el, pred) {
 
 function inputConClase(contenedor, clase) {
   return buscar(contenedor, (el) => el.tagName === "INPUT" && el.className.includes(clase));
-}
-
-function aviso(contenedor) {
-  return buscar(contenedor, (el) => el.className && el.className.includes("save-warn"));
 }
 
 function fire(el, tipo) {
@@ -101,6 +105,83 @@ test("dos renglones del mismo slug capturan por separado", () => {
   assertEq(registroDe(pesado.slot, hoyISO()).pesoKg, 12);
 });
 
+// El bug más grave del lote: un peso mal tecleado ("3o") o negativo hacía
+// que aKg() devolviera null y ese null se guardara con éxito, borrando en
+// silencio el peso ya guardado. El campo debe poder seguir vaciándose a
+// propósito (borrado real), pero texto no vacío e ininterpretable no debe
+// tocar lo ya guardado, y tiene que avisar.
+test("un peso ininterpretable no borra el valor guardado y muestra aviso", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  const aviso = crearAviso();
+  montarCampos(contenedor, EJERCICIO, "kg", aviso);
+  const inputPeso = inputConClase(contenedor, "f-w");
+
+  inputPeso.value = "30";
+  fire(inputPeso, "change");
+  assertEq(registroDe(SLOT, hoyISO()).pesoKg, 30);
+  assertEq(aviso.hidden, true);
+
+  inputPeso.value = "3o";
+  fire(inputPeso, "change");
+  assertEq(registroDe(SLOT, hoyISO()).pesoKg, 30);
+  assertEq(aviso.hidden, false);
+});
+
+test("un peso negativo tampoco borra el valor guardado", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  const aviso = crearAviso();
+  montarCampos(contenedor, EJERCICIO, "kg", aviso);
+  const inputPeso = inputConClase(contenedor, "f-w");
+
+  inputPeso.value = "30";
+  fire(inputPeso, "change");
+  inputPeso.value = "-5";
+  fire(inputPeso, "change");
+
+  assertEq(registroDe(SLOT, hoyISO()).pesoKg, 30);
+  assertEq(aviso.hidden, false);
+});
+
+test("vaciar el campo de peso a propósito sí borra el dato guardado", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  const aviso = crearAviso();
+  montarCampos(contenedor, EJERCICIO, "kg", aviso);
+  const inputPeso = inputConClase(contenedor, "f-w");
+
+  inputPeso.value = "30";
+  fire(inputPeso, "change");
+  inputPeso.value = "";
+  fire(inputPeso, "change");
+
+  assertEq(registroDe(SLOT, hoyISO()).pesoKg, null);
+  assertEq(aviso.hidden, true);
+});
+
+// --- montarCampos: series como número, igual que migracion.js ---
+
+test("series capturada desde los campos se guarda como número, no como cadena", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  montarCampos(contenedor, EJERCICIO, "kg");
+  const inputSeries = inputConClase(contenedor, "f-s");
+  inputSeries.value = "4";
+  fire(inputSeries, "change");
+  assertEq(registroDe(SLOT, hoyISO()).series, 4);
+});
+
+test("una serie no numérica se guarda como null, no como la cadena tal cual", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  montarCampos(contenedor, EJERCICIO, "kg");
+  const inputSeries = inputConClase(contenedor, "f-s");
+  inputSeries.value = "muchas";
+  fire(inputSeries, "change");
+  assertEq(registroDe(SLOT, hoyISO()).series, null);
+});
+
 // --- montarPalomita ---
 
 test("desmarcar la palomita deja hecho:false sin borrar el peso", () => {
@@ -109,7 +190,7 @@ test("desmarcar la palomita deja hecho:false sin borrar el peso", () => {
     fecha: hoyISO(), slug: "sentadilla", pesoKg: 40, series: "4", reps: "10", hecho: true
   });
   const li = document.createElement("li");
-  const input = montarPalomita(li, EJERCICIO);
+  const input = montarPalomita(li, EJERCICIO, "Sentadilla", crearAviso());
   assertEq(input.checked, true);
 
   // El navegador ya volteó `checked` antes de disparar "change" — se
@@ -122,12 +203,19 @@ test("desmarcar la palomita deja hecho:false sin borrar el peso", () => {
   assertEq(registro.pesoKg, 40);
 });
 
+test("la palomita usa el nombre del ejercicio en su aria-label", () => {
+  limpiar();
+  const li = document.createElement("li");
+  const input = montarPalomita(li, EJERCICIO, "Sentadilla", crearAviso());
+  assertEq(input.getAttribute("aria-label"), "Marcar Sentadilla como completado");
+});
+
 test("un guardado fallido muestra el aviso y no deja el ejercicio como hecho", () => {
   limpiar();
   const li = document.createElement("li");
-  const input = montarPalomita(li, EJERCICIO);
-  const avisoEl = aviso(li);
-  assertEq(avisoEl.hidden, true);
+  const aviso = crearAviso();
+  const input = montarPalomita(li, EJERCICIO, "Sentadilla", aviso);
+  assertEq(aviso.hidden, true);
 
   const original = localStorage.setItem;
   localStorage.setItem = () => {
@@ -140,7 +228,7 @@ test("un guardado fallido muestra el aviso y no deja el ejercicio como hecho", (
     localStorage.setItem = original;
   }
 
-  assertEq(avisoEl.hidden, false);
+  assertEq(aviso.hidden, false);
   assertEq(input.checked, false);
   assertEq(li.classList.contains("done"), false);
   assertEq(registroDe(SLOT, hoyISO()), null);

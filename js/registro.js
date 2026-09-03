@@ -5,7 +5,7 @@
 // two slots, so they never overwrite each other. The `slug` rides along in
 // every record so historial(slug) can follow the exercise across slots.
 import { guardarRegistro, registroDe, hoyISO } from "./almacen.js";
-import { aKg, desdeKg } from "./unidades.js";
+import { aKg, desdeKg, aNumeroONull } from "./unidades.js";
 
 // --- lectura/escritura del registro de hoy ---
 
@@ -35,16 +35,33 @@ function actualizarRegistroDeHoy(slot, slug, cambios, avisoEl) {
   const actual = registroDeHoy(slot, slug);
   const siguiente = { ...actual, ...cambios, fecha: hoyISO(), slug };
   const ok = guardarRegistro(slot, siguiente);
-  if (avisoEl) avisoEl.hidden = ok;
+  if (avisoEl) {
+    if (ok) ocultarAviso(avisoEl);
+    else mostrarAviso(avisoEl, "No se guardó (almacenamiento lleno)");
+  }
   return ok;
 }
 
-function crearAviso() {
+// One warning per exercise row: montarCampos and montarPalomita both write
+// through the same `aviso` element (created here, appended exactly once by
+// render.js) instead of each drawing its own — two "no se guardó" spans on
+// the same row said the same thing twice.
+export function crearAviso() {
   const span = document.createElement("span");
   span.className = "save-warn";
-  span.textContent = "No se guardó (almacenamiento lleno)";
   span.hidden = true;
   return span;
+}
+
+function mostrarAviso(el, mensaje) {
+  if (!el) return;
+  el.textContent = mensaje;
+  el.hidden = false;
+}
+
+function ocultarAviso(el) {
+  if (!el) return;
+  el.hidden = true;
 }
 
 // --- construcción de campos ---
@@ -69,11 +86,12 @@ function campoTexto(etiqueta, clase, valorInicial, placeholder, inputmode) {
 // is the routine row itself: it carries both the `slot` these fields write
 // to and the `slug` stored inside the record. `unidad` only affects how the
 // stored kg is shown/typed here — aKg() converts back to kg before every
-// save, so a pound never reaches storage as-is.
-export function montarCampos(contenedor, ejercicioRutina, unidad) {
+// save, so a pound never reaches storage as-is. `aviso` is the row's single
+// shared save-warning element (see crearAviso in render.js's caller) — this
+// function only shows/hides it, never creates or appends its own.
+export function montarCampos(contenedor, ejercicioRutina, unidad, aviso) {
   const { slot, slug } = ejercicioRutina;
   const registro = registroDeHoy(slot, slug);
-  const aviso = crearAviso();
 
   const pesoMostrado =
     registro.pesoKg != null ? desdeKg(registro.pesoKg, unidad) : null;
@@ -85,12 +103,30 @@ export function montarCampos(contenedor, ejercicioRutina, unidad) {
     "Reps", "f-r", registro.reps, ejercicioRutina.reps ?? "reps", "text"
   );
 
+  // An empty field is an intentional clear (pesoKg: null persists). Text
+  // that isn't empty but doesn't parse as a weight ("3o", a negative) must
+  // never overwrite what's already saved — aKg() returns null for both
+  // cases alike, so they have to be told apart before calling it, or a typo
+  // silently erases a real number with no warning shown.
   campoPeso.input.addEventListener("change", () => {
-    const kg = aKg(campoPeso.input.value, unidad);
+    const texto = campoPeso.input.value.trim();
+    if (texto === "") {
+      actualizarRegistroDeHoy(slot, slug, { pesoKg: null }, aviso);
+      return;
+    }
+    const kg = aKg(texto, unidad);
+    if (kg === null) {
+      mostrarAviso(aviso, "Peso no válido, no se guardó");
+      return;
+    }
     actualizarRegistroDeHoy(slot, slug, { pesoKg: kg }, aviso);
   });
+  // series is a count, stored as a number or null — same aNumeroONull
+  // normalization migracion.js applies to legacy data, so the field's type
+  // no longer depends on whether the record came from today's capture or
+  // from an import.
   campoSeries.input.addEventListener("change", () => {
-    const valor = campoSeries.input.value.trim() || null;
+    const valor = aNumeroONull(campoSeries.input.value);
     actualizarRegistroDeHoy(slot, slug, { series: valor }, aviso);
   });
   campoReps.input.addEventListener("change", () => {
@@ -100,7 +136,7 @@ export function montarCampos(contenedor, ejercicioRutina, unidad) {
 
   const track = document.createElement("div");
   track.className = "ex-track";
-  track.append(campoPeso.label, campoSeries.label, campoReps.label, aviso);
+  track.append(campoPeso.label, campoSeries.label, campoReps.label);
   contenedor.appendChild(track);
 }
 
@@ -111,19 +147,26 @@ export function montarCampos(contenedor, ejercicioRutina, unidad) {
 // `fecha` change. Same failure handling as montarCampos: a failed write
 // shows `aviso` and, since nothing actually persisted, reconciles both the
 // checkbox and the strike-through with what's really on disk instead of
-// leaving them showing the tap the user just made.
-export function montarPalomita(contenedor, ejercicioRutina) {
+// leaving them showing the tap the user just made. `nombre` is the
+// exercise's display name, so the aria-label says what is being marked
+// done instead of a label every checkbox on the page shares (VoiceOver has
+// no other way to tell them apart). `aviso` is the row's single shared
+// save-warning element — see montarCampos.
+export function montarPalomita(contenedor, ejercicioRutina, nombre, aviso) {
   const { slot, slug } = ejercicioRutina;
   const registro = registroDeHoy(slot, slug);
-  const aviso = crearAviso();
 
-  const wrap = document.createElement("span");
+  // A <label>, not a bare <span>: it's what lets the wrapper be given a
+  // tap target bigger than the 22×22 checkbox it draws (see .check-wrap in
+  // estilos.css) without a click on that extra padding falling through to
+  // nothing — a native label-wraps-control click always reaches the input.
+  const wrap = document.createElement("label");
   wrap.className = "check-wrap";
   const input = document.createElement("input");
   input.type = "checkbox";
   input.className = "check";
   input.checked = !!registro.hecho;
-  input.setAttribute("aria-label", "Marcar ejercicio como hecho");
+  input.setAttribute("aria-label", `Marcar ${nombre} como completado`);
   contenedor.classList.toggle("done", input.checked);
 
   input.addEventListener("change", () => {
@@ -136,7 +179,6 @@ export function montarPalomita(contenedor, ejercicioRutina) {
 
   wrap.appendChild(input);
   contenedor.prepend(wrap);
-  contenedor.appendChild(aviso);
   return input;
 }
 
@@ -226,8 +268,10 @@ function notifyRestDone(ctx) {
 // button — there's nothing to count down — same as the monolith did.
 // Clicking the button starts a countdown, clicking again cancels it, and
 // reaching zero beeps, vibrates and shows "¡Listo!" for 2.5s before
-// reverting to idle.
-export function montarTemporizador(contenedor, segundos, etiqueta) {
+// reverting to idle. `nombre` is the exercise's display name, folded into
+// every aria-label below — otherwise every rest button on the page reads
+// the same to VoiceOver.
+export function montarTemporizador(contenedor, segundos, etiqueta, nombre) {
   const wrap = document.createElement("span");
   wrap.className = "plate-wrap";
 
@@ -251,7 +295,7 @@ export function montarTemporizador(contenedor, segundos, etiqueta) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "plate plate--rest";
-  btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta}`);
+  btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta} para ${nombre}`);
   btn.appendChild(span);
 
   let timerId = null;
@@ -262,7 +306,7 @@ export function montarTemporizador(contenedor, segundos, etiqueta) {
       timerId = null;
       btn.classList.remove("running", "done");
       span.textContent = etiqueta;
-      btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta}`);
+      btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta} para ${nombre}`);
       return;
     }
     const ctx = ensureAudio();
@@ -270,7 +314,7 @@ export function montarTemporizador(contenedor, segundos, etiqueta) {
     btn.classList.remove("done");
     btn.classList.add("running");
     span.textContent = formatMMSS(restante);
-    btn.setAttribute("aria-label", "Cancelar descanso en curso");
+    btn.setAttribute("aria-label", `Cancelar descanso en curso para ${nombre}`);
     timerId = setInterval(() => {
       restante--;
       if (restante <= 0) {
@@ -284,7 +328,7 @@ export function montarTemporizador(contenedor, segundos, etiqueta) {
         setTimeout(() => {
           btn.classList.remove("done");
           span.textContent = etiqueta;
-          btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta}`);
+          btn.setAttribute("aria-label", `Iniciar descanso de ${etiqueta} para ${nombre}`);
         }, 2500);
       } else {
         span.textContent = formatMMSS(restante);
