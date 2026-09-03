@@ -36,3 +36,29 @@ test("cadena vacía o nula devuelve vacío, no NaN", () => {
 test("una unidad desconocida lanza error", () => {
   assertThrows(() => aKg(10, "piedras"));
 });
+
+test("aKg trata cadena vacía, null y undefined como sin dato", () => {
+  assertEq(aKg("", "kg"), null);
+  assertEq(aKg(null, "kg"), null);
+  assertEq(aKg(undefined, "kg"), null);
+});
+
+test("desdeKg trata cadena vacía, null y undefined como sin dato", () => {
+  assertEq(desdeKg("", "kg"), null);
+  assertEq(desdeKg(null, "kg"), null);
+  assertEq(desdeKg(undefined, "kg"), null);
+});
+
+test("aKg acepta la coma decimal como equivalente al punto", () => {
+  assertEq(aKg("70,5", "kg"), 70.5);
+});
+
+test("un peso negativo no es válido y devuelve null", () => {
+  assertEq(aKg(-10, "kg"), null);
+  assertEq(desdeKg(-10, "kg"), null);
+});
+
+test("cero sigue siendo un valor válido", () => {
+  assertEq(aKg(0, "kg"), 0);
+  assertEq(desdeKg(0, "kg"), 0);
+});
