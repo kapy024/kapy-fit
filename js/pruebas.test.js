@@ -39,3 +39,31 @@ test("assertThrows falla cuando la función no lanza", () => {
     });
   }, "assertThrows debería fallar si fn() no lanza");
 });
+
+test("assertEq detecta dos Date distintas (regresión: Object.keys(Date) es [])", () => {
+  assertThrows(
+    () => assertEq(new Date("2026-01-01"), new Date("2026-01-02")),
+    "dos fechas distintas no deberían reportarse como iguales"
+  );
+});
+
+test("assertEq trata dos Date con el mismo instante como iguales", () => {
+  assertEq(new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"));
+});
+
+test("assertEq compara estructuras cíclicas equivalentes sin RangeError", () => {
+  const a = { nombre: "ciclo" };
+  a.self = a;
+  const b = { nombre: "ciclo" };
+  b.self = b;
+  assertEq(a, b);
+});
+
+test("assertEq detecta un Map con contenido distinto", () => {
+  const a = new Map([["clave", 1]]);
+  const b = new Map([["clave", 2]]);
+  assertThrows(
+    () => assertEq(a, b),
+    "dos Map con el mismo tamaño pero contenido distinto no deberían ser iguales"
+  );
+});
