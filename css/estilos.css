@@ -463,6 +463,18 @@
     color:var(--text-dim);
   }
   .ex-sub .w::before{content:"· "}
+  .ex-gif{
+    width:100%;
+    max-width:180px;
+    border-radius:10px;
+    border:1px solid var(--border);
+    background:var(--surface-2);
+    display:block;
+    margin-top:10px;
+  }
+  @media (prefers-reduced-motion: reduce){
+    .ex-gif{content-visibility:auto}
+  }
   .save-warn{
     flex-basis:100%;
     font-size:11px;

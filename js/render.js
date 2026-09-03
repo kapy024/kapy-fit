@@ -12,6 +12,7 @@ import {
   montarCampos, montarPalomita, montarTemporizador,
   parseRestSeconds, clearAllTimers
 } from "./registro.js";
+import { montarImagen } from "./imagenes.js";
 
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
@@ -138,6 +139,7 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   const body = document.createElement("div");
   body.className = "ex-body";
   body.appendChild(pintarInfoEjercicio(ejercicioRutina, cat, unidad));
+  montarImagen(body, ejercicioRutina.slug, cat);
   montarCampos(body, ejercicioRutina.slug, ejercicioRutina, unidad);
   li.appendChild(body);
 
