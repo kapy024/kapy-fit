@@ -101,11 +101,20 @@ a que edite después.
 
 ### Registro
 
-`exercise_logs` — `user_id`, `exercise_slug`, `logged_on`, `weight_kg`, `sets`,
-`reps`, `completed`.
+`exercise_logs` — `user_id`, `slot`, `exercise_slug`, `logged_on`, `weight_kg`,
+`sets`, `reps`, `completed`.
 
-El log apunta al **slug**, no a la posición. Por eso el historial de sentadilla
-sobrevive a reordenar el split, mover el ejercicio de día o editar la rutina.
+El log se identifica por **`slot`** (el renglón concreto de la rutina: día +
+bloque + ejercicio, con un sufijo de ocurrencia cuando el mismo ejercicio
+aparece dos veces en un bloque — el día 1 hace dos series de press militar),
+no por el slug a secas: dos series del mismo ejercicio en una misma sesión
+son dos renglones independientes, y si el log solo llevara el slug la
+segunda pisaría a la primera. El **`exercise_slug`** viaja también en cada
+renglón, pero no como identidad — como hilo conductor: es lo que permite
+seguir a un ejercicio a través de días y variantes (el historial de
+sentadilla junta sus renglones sin importar en qué día o bloque se
+registraron, y sobrevive a reordenar el split o mover el ejercicio de día),
+que es justo lo que necesitan las gráficas por ejercicio de la entrega 3.
 Marcar un ejercicio como hecho *es* escribir un renglón: la palomita y el
 historial son la misma tabla.
 
