@@ -58,3 +58,31 @@ test("sin ejercicios marcados el texto lo dice, no queda vacío", () => {
 test("el nombre de archivo incluye día y fecha", () => {
   assertEq(nombreArchivoICS(ENTRADA.dia, "2026-09-02"), "entrenamiento-dia3-2026-09-02.ics");
 });
+
+test("el .ics escapa punto y coma, barra invertida y salto de línea", () => {
+  const t = textoICS({ ...ENTRADA, lineas: ["Sentadilla; pesada", "Ruta C:\\gym", "linea1\nlinea2"] });
+  assertEq(t.includes("Sentadilla\\; pesada"), true, "punto y coma");
+  assertEq(t.includes("C:\\\\gym"), true, "barra invertida");
+  assertEq(t.includes("linea1\\nlinea2"), true, "salto de línea");
+});
+
+test("el día siguiente cruza bien fin de mes, fin de año y bisiesto", () => {
+  const casos = [
+    ["2026-01-31", "20260201"],
+    ["2026-12-31", "20270101"],
+    ["2028-02-28", "20280229"],
+    ["2028-02-29", "20280301"],
+    ["2026-02-28", "20260301"]
+  ];
+  for (const [fecha, finEsperado] of casos) {
+    const t = textoICS({ ...ENTRADA, fecha });
+    assertEq(t.includes(`DTEND;VALUE=DATE:${finEsperado}`), true, `fin de ${fecha}`);
+  }
+});
+
+test("un bloque sin etiqueta no rompe el título", () => {
+  for (const bloque of [null, undefined, {}]) {
+    const u = urlCalendario({ ...ENTRADA, bloque });
+    assertEq(u.includes("undefined"), false, "etiqueta indefinida se coló al título");
+  }
+});
