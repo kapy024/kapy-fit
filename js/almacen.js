@@ -13,6 +13,10 @@
 // "hierro2:" (the intermediate version) is ever deleted.
 export const LLAVE_REGISTROS = "hierro3:registros";
 export const LLAVE_PREFS = "hierro3:prefs";
+// Whether the legacy-data import banner has already been resolved (imported
+// or explicitly dismissed), so app.js stops re-offering it on every load —
+// its own key, separate from prefs/registros, since it isn't a preference.
+export const LLAVE_MIGRACION = "hierro3:migracion";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -64,25 +68,36 @@ export function hoyISO() {
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
 
+// True when `r` has a usable `fecha` to sort/compare by. A record with no
+// date (or a corrupted non-string one) can't be placed in a chronological
+// history — it gets discarded by the readers below instead of throwing
+// out of `localeCompare` and taking the whole render down with it.
+function tieneFechaValida(r) {
+  return !!r && typeof r.fecha === "string" && r.fecha !== "";
+}
+
 // Returns every record of one routine row (`slot`), ascending by date.
 export function historialDeSlot(slot) {
   const todo = leerJSON(LLAVE_REGISTROS, {});
   const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
-  return [...lista].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  return lista.filter(tieneFechaValida).sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
 // Returns every record of `slug` across ALL slots, ascending by date. This
 // is the exercise-level view — the one the future charts consume: the same
 // exercise logged on day 3 and on day 6, or in two different variants, is
 // one history. Rows written before slugs were stored (there should be none,
-// the prefix was bumped) simply don't match and are skipped.
+// the prefix was bumped) simply don't match and are skipped. Each returned
+// element carries the `slot` it came from (read-time only — the stored
+// record itself is untouched), so a chart can tell apart, say, the light
+// and the heavy set of the same exercise inside one history.
 export function historial(slug) {
   const todo = leerJSON(LLAVE_REGISTROS, {});
   const juntos = [];
   for (const slot of Object.keys(todo)) {
     const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
     for (const r of lista) {
-      if (r && r.slug === slug) juntos.push(r);
+      if (r && r.slug === slug && tieneFechaValida(r)) juntos.push({ ...r, slot });
     }
   }
   return juntos.sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -126,13 +141,25 @@ export function llavesLegadas(patron) {
   }
 }
 
+// True for a plain object — not null, not an array, not a bare string or
+// number. Spreading anything else (`{ ...42 }`, and notably `{ ..."cadena" }`,
+// which fans a string out into `{0:"c",1:"a",...}`) produces garbage instead
+// of throwing, so this has to be checked before preferencias() spreads
+// whatever leerJSON handed back.
+function esObjetoPlano(valor) {
+  return typeof valor === "object" && valor !== null && !Array.isArray(valor);
+}
+
 // Returns the saved preferences, defaulting `unidad` to "kg" both when
 // nothing was saved and when what was saved isn't a unit this app
 // understands (e.g. hand-edited storage, or a future format change) —
 // unidades.js throws on anything else, so this is the one place that
-// must never hand it garbage.
+// must never hand it garbage. Same defense for the preferences object
+// itself: a corrupted `hierro3:prefs` (anything but a plain object) falls
+// back to `{}` instead of being spread as-is.
 export function preferencias() {
-  const guardadas = leerJSON(LLAVE_PREFS, {});
+  const leido = leerJSON(LLAVE_PREFS, {});
+  const guardadas = esObjetoPlano(leido) ? leido : {};
   const unidad = guardadas.unidad === "lb" ? "lb" : "kg";
   return { ...guardadas, unidad };
 }
@@ -141,4 +168,18 @@ export function preferencias() {
 // Returns true if the write persisted, false if storage refused it.
 export function guardarPreferencias(prefs) {
   return escribirJSON(LLAVE_PREFS, { ...preferencias(), ...prefs });
+}
+
+// Whether the legacy-import banner has already been resolved — either the
+// user imported, or explicitly dismissed it. Defaults to false (never
+// resolved) so a fresh install still offers the import once.
+export function migracionResuelta() {
+  return leerJSON(LLAVE_MIGRACION, false) === true;
+}
+
+// Marks the legacy-import banner as resolved so app.js stops offering it by
+// default. Returns true if persisted, false if storage refused it — same
+// contract as every other write here.
+export function marcarMigracionResuelta() {
+  return escribirJSON(LLAVE_MIGRACION, true);
 }

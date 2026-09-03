@@ -7,7 +7,8 @@ import { test, assertEq } from "./pruebas.js";
 import {
   guardarRegistro, historial, historialDeSlot, registroDe,
   preferencias, guardarPreferencias, llavesLegadas,
-  LLAVE_REGISTROS, LLAVE_PREFS
+  migracionResuelta, marcarMigracionResuelta,
+  LLAVE_REGISTROS, LLAVE_PREFS, LLAVE_MIGRACION
 } from "./almacen.js";
 import { aKg } from "./unidades.js";
 
@@ -16,6 +17,7 @@ const SLOT = "dia3:base:sentadilla";
 function limpiar() {
   localStorage.removeItem(LLAVE_REGISTROS);
   localStorage.removeItem(LLAVE_PREFS);
+  localStorage.removeItem(LLAVE_MIGRACION);
 }
 
 function reg(fecha, slug, extra) {
@@ -91,6 +93,44 @@ test("historial(slug) ignora los registros de otros ejercicios", () => {
   assertEq(historial("crunch"), []);
 });
 
+// Las gráficas de la entrega 3 necesitan distinguir, dentro de una misma
+// curva, de qué slot vino cada punto (la serie ligera vs. la pesada del
+// mismo ejercicio). El slot se anota solo al leer — lo que se guarda no
+// cambia de forma.
+test("historial(slug) incluye el slot de cada registro", () => {
+  limpiar();
+  guardarRegistro("dia6:v1:abduccion-cadera", reg("2026-09-01", "abduccion-cadera", { pesoKg: 45 }));
+  guardarRegistro("dia6:v2:abduccion-cadera", reg("2026-09-02", "abduccion-cadera", { pesoKg: 50 }));
+  const h = historial("abduccion-cadera");
+  assertEq(h.map((r) => r.slot), ["dia6:v1:abduccion-cadera", "dia6:v2:abduccion-cadera"]);
+});
+
+// Un registro corrupto (sin fecha, por ejemplo escrito a mano en devtools o
+// por un bug de otra versión) no debe tumbar el historial completo: se
+// descarta, el resto se lee igual.
+test("un registro sin fecha se descarta en vez de tronar historialDeSlot", () => {
+  limpiar();
+  localStorage.setItem(LLAVE_REGISTROS, JSON.stringify({
+    [SLOT]: [
+      { slug: "sentadilla", pesoKg: 99 },
+      reg("2026-09-02", "sentadilla", { pesoKg: 20 })
+    ]
+  }));
+  const h = historialDeSlot(SLOT);
+  assertEq(h.length, 1);
+  assertEq(h[0].pesoKg, 20);
+});
+
+test("historial(slug) descarta registros sin fecha en cualquier slot, sin tronar", () => {
+  limpiar();
+  const todo = {
+    "dia6:v1:abduccion-cadera": [{ slug: "abduccion-cadera", pesoKg: 10 }],
+    "dia6:v2:abduccion-cadera": [reg("2026-09-01", "abduccion-cadera", { pesoKg: 45 })]
+  };
+  localStorage.setItem(LLAVE_REGISTROS, JSON.stringify(todo));
+  assertEq(historial("abduccion-cadera").map((r) => r.fecha), ["2026-09-01"]);
+});
+
 test("registroDe devuelve null cuando no hay nada esa fecha", () => {
   limpiar();
   assertEq(registroDe(SLOT, "2026-01-01"), null);
@@ -136,6 +176,38 @@ test("preferencias() cae a kg ante una unidad guardada inválida", () => {
   limpiar();
   localStorage.setItem(LLAVE_PREFS, JSON.stringify({ unidad: "stones" }));
   assertEq(preferencias().unidad, "kg");
+  limpiar();
+});
+
+// hierro3:prefs con basura que no es un objeto (una cadena, un arreglo...)
+// no debe propagarse: spread de una cadena la desarma en {0:"c",1:"a",...}.
+test("preferencias() cae al objeto por omisión si lo guardado no es un objeto", () => {
+  limpiar();
+  localStorage.setItem(LLAVE_PREFS, JSON.stringify("cadena"));
+  assertEq(preferencias(), { unidad: "kg" });
+  limpiar();
+});
+
+test("preferencias() cae al objeto por omisión si lo guardado es un arreglo", () => {
+  limpiar();
+  localStorage.setItem(LLAVE_PREFS, JSON.stringify([1, 2, 3]));
+  assertEq(preferencias(), { unidad: "kg" });
+  limpiar();
+});
+
+// --- migración: se marca como resuelta para no volver a ofrecerla sola ---
+
+test("migracionResuelta() es false por omisión", () => {
+  limpiar();
+  assertEq(migracionResuelta(), false);
+});
+
+test("marcarMigracionResuelta() persiste y migracionResuelta() lo refleja", () => {
+  limpiar();
+  assertEq(migracionResuelta(), false);
+  const ok = marcarMigracionResuelta();
+  assertEq(ok, true);
+  assertEq(migracionResuelta(), true);
   limpiar();
 });
 
