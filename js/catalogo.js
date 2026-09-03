@@ -209,7 +209,7 @@ export const CATALOGO = {
     imagenFin: null
   },
   "curl-predicador": {
-    nombre: "Predicador (pesado)",
+    nombre: "Curl predicador",
     video: "https://www.youtube.com/watch?v=gLmAlQn9f4k",
     imagenInicio: null,
     imagenFin: null
@@ -251,7 +251,7 @@ export const CATALOGO = {
     imagenFin: null
   },
   "fly-mancuernas": {
-    nombre: "Fly (aperturas) al fallo",
+    nombre: "Fly con mancuernas (aperturas)",
     video: "https://www.youtube.com/watch?v=-AQ0sJv4e8k",
     imagenInicio: null,
     imagenFin: null
