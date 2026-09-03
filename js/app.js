@@ -42,6 +42,11 @@ btnKg.addEventListener("click", () => cambiarUnidad("kg"));
 btnLb.addEventListener("click", () => cambiarUnidad("lb"));
 pintarUnidad();
 
+// Spanish noun agreement: only 1 takes the singular form.
+function plural(n, singular, plural_) {
+  return n === 1 ? singular : plural_;
+}
+
 // Import notice for the previous version's data: shows what was found
 // before writing anything, and never hides orphans (records the legacy
 // map can't place). Old "hierro:" keys are never deleted — see migracion.js.
@@ -51,16 +56,16 @@ function pintarAvisoMigracion() {
   const aviso = document.createElement("div");
   aviso.className = "aviso";
   aviso.innerHTML =
-    `<p>Encontré <strong>${encontrados.length}</strong> registros de la versión anterior` +
+    `<p>Encontré <strong>${encontrados.length}</strong> ${plural(encontrados.length, "registro", "registros")} de la versión anterior` +
     (huerfanos.length ? ` y <strong>${huerfanos.length}</strong> que ya no puedo ubicar` : "") +
     `. Tus datos viejos no se borran.</p>`;
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "cal-btn";
-  btn.textContent = `Importar ${encontrados.length} registros`;
+  btn.textContent = `Importar ${encontrados.length} ${plural(encontrados.length, "registro", "registros")}`;
   btn.addEventListener("click", () => {
     const n = importar(encontrados);
-    aviso.textContent = `Listo: ${n} registros importados.`;
+    aviso.textContent = `Listo: ${n} ${plural(n, "registro importado", "registros importados")}.`;
     refrescar();
   });
   aviso.appendChild(btn);
