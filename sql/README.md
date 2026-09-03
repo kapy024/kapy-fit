@@ -17,6 +17,19 @@ deja de reflejar lo que realmente hay en la base.
 2. `002_rls.sql` — activa Row Level Security en las 8 tablas y define las
    políticas de acceso. Este es el paso que hace segura a la anon key
    pública del repo.
+3. `003_semilla.sql` — siembra el catálogo de 43 ejercicios y la plantilla
+   oficial (`routines.user_id is null`, 7 días, 80 renglones). **Generado**
+   desde `js/catalogo.js` y `js/rutina.js` con
+   `node scripts/generar-semilla.mjs > sql/003_semilla.sql` — no se edita a
+   mano; si el catálogo o la rutina cambian en el código, se regenera este
+   archivo y se vuelve a aplicar. Es idempotente: upsert por `slug` en
+   `exercises`, y borra la plantilla anterior antes de insertar la nueva, así
+   que reaplicarlo no acumula duplicados.
+4. `004_clonado.sql` — función `clonar_plantilla(uid)` y el trigger
+   `on_auth_user_created` que la dispara `after insert on auth.users`: crea
+   el `profiles` del usuario y le copia la plantilla oficial completa
+   (días, bloques y ejercicios), conservando el `slot` de cada renglón tal
+   cual. Es idempotente (si el usuario ya tiene rutina, no hace nada).
 
 Pegar el contenido de cada archivo en el editor SQL de Supabase y ejecutarlo,
 uno a la vez, en ese orden.
@@ -90,6 +103,66 @@ Esperado: `exercise_logs` y `routines` solo devuelven filas de A (nunca de
 B); `exercises` responde con el catálogo completo; el intento de escritura
 en `exercises` devuelve un error de política, no un `201`.
 
+### Después de `003_semilla.sql`
+
+```sql
+select (select count(*) from exercises)                                as ejercicios,
+       (select count(*) from routine_days   where routine_id =
+          (select id from routines where user_id is null))             as dias,
+       (select count(*) from routine_exercises re
+          join routine_blocks b on b.id = re.block_id
+          join routine_days   d on d.id = b.day_id
+         where d.routine_id = (select id from routines where user_id is null)) as renglones;
+```
+
+Esperado: `43 | 7 | 80` — debe coincidir con lo que dice el código:
+
+```bash
+node -e 'import("./js/catalogo.js").then(m=>console.log("ejercicios:", m.slugs().length));
+         import("./js/rutina.js").then(m=>{
+           console.log("dias:", m.RUTINA.length);
+           console.log("renglones:", m.RUTINA.flatMap(d=>d.bloques.flatMap(b=>b.ejercicios)).length);
+         });'
+```
+
+Si los números no coinciden, la semilla perdió algo: no seguir adelante.
+
+### Después de `004_clonado.sql`
+
+Crear un usuario de prueba desde Authentication → Users → Add user, y
+verificar:
+
+```sql
+select u.email,
+       (select count(*) from routines r where r.user_id = u.id)  as rutinas,
+       (select count(*) from routine_exercises re
+          join routine_blocks b on b.id = re.block_id
+          join routine_days   d on d.id = b.day_id
+          join routines       r on r.id = d.routine_id
+         where r.user_id = u.id)                                  as renglones,
+       (select count(*) from profiles p where p.id = u.id)        as perfil
+  from auth.users u order by u.created_at desc limit 3;
+```
+
+Esperado: `rutinas = 1`, `perfil = 1`, `renglones = 80` (igual a la
+plantilla). Y, lo más importante, que el clon no inventó slots:
+
+```sql
+select count(*) from routine_exercises re
+  join routine_blocks b on b.id=re.block_id
+  join routine_days d on d.id=b.day_id
+  join routines r on r.id=d.routine_id
+ where r.user_id is not null
+   and re.slot not in (select slot from routine_exercises re2
+     join routine_blocks b2 on b2.id=re2.block_id
+     join routine_days d2 on d2.id=b2.day_id
+     join routines r2 on r2.id=d2.routine_id where r2.user_id is null);
+```
+
+Esperado: **0**. Cualquier otro número significa que el registro del cliente
+en `localStorage` no va a coincidir con lo que hay en la base. Borrar el
+usuario de prueba al terminar.
+
 ### Idempotencia del upsert
 
 Para confirmar que `unique (user_id, slot, logged_on)` evita duplicados al
@@ -105,10 +178,11 @@ registro.
 
 ## Nota sobre este archivo
 
-Este README documenta el "Paso 2" de las tareas 2 y 3 de la entrega,
+Este README documenta el "Paso 2" de las tareas 2, 3, 4 y 5 de la entrega,
 ajustado porque quien redactó el SQL no tiene acceso al panel de Supabase.
 Las consultas de arriba son las mismas que traían los brief originales; están
 aquí para que el dueño del proyecto las pegue tal cual al aplicar cada
 archivo. El detalle de qué se verificó de otra forma (una base Postgres
-desechable local) está en
-`.superpowers/sdd/briefs2/tarea-2-3-report.md`.
+desechable local) está en `.superpowers/sdd/briefs2/tarea-2-3-report.md`
+(tareas 2 y 3) y `.superpowers/sdd/briefs2/tarea-4-5-report.md` (tareas 4 y
+5).
