@@ -535,16 +535,6 @@
     margin-top:3px;
     font-style:italic;
   }
-  .badge-ok{
-    display:inline-flex;
-    align-items:center;
-    gap:4px;
-    font-size:11px;
-    font-weight:700;
-    color:var(--moss);
-    text-transform:uppercase;
-    letter-spacing:.04em;
-  }
 
   .tech-link{
     flex:0 0 auto;
