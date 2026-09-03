@@ -161,7 +161,7 @@ export const CATALOGO = {
     imagenFin: null
   },
   "press-mancuernas-plano": {
-    nombre: "Press de pecho con mancuernas + lagartijas",
+    nombre: "Press en banco plano con mancuernas",
     video: "https://www.youtube.com/watch?v=aUtj6oqSQPo",
     imagenInicio: null,
     imagenFin: null
