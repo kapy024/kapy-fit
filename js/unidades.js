@@ -12,15 +12,17 @@ function redondear(n) {
   return Math.round(n * 10) / 10;
 }
 
-// Normalizes a raw value (from an input field or already a number) into a
-// finite, non-negative number, or null when there is no usable data.
-// Empty string, null and undefined are all treated as "no data" explicitly,
-// rather than relying on Number("") / Number(null) both coercing to 0.
-// A Spanish-locale decimal comma ("70,5") is accepted as equivalent to a dot.
-// Negative numbers have no physical meaning as a body weight, so they are
-// treated as invalid input (null) rather than passed through; zero remains
-// a legitimate value (e.g. bodyweight exercises).
-function normalizar(valor) {
+// Normalizes a raw value (from an input field, storage, or already a
+// number) into a finite, non-negative number, or null when there is no
+// usable data. Empty string, null and undefined are all treated as "no
+// data" explicitly, rather than relying on Number("") / Number(null) both
+// coercing to 0. A Spanish-locale decimal comma ("70,5") is accepted as
+// equivalent to a dot. Negative numbers have no physical meaning as a
+// body weight, so they are treated as invalid input (null) rather than
+// passed through; zero remains a legitimate value (e.g. bodyweight
+// exercises). Exported so this is the single "text to number" parser in
+// the project — migracion.js reuses it instead of reimplementing it.
+export function aNumeroONull(valor) {
   if (valor === null || valor === undefined || valor === "") return null;
   const texto =
     typeof valor === "string" ? valor.trim().replace(",", ".") : valor;
@@ -34,7 +36,7 @@ function normalizar(valor) {
 // Converts a user-entered value in `unidad` into canonical kilograms.
 export function aKg(valor, unidad) {
   validar(unidad);
-  const n = normalizar(valor);
+  const n = aNumeroONull(valor);
   if (n === null) return null;
   return unidad === "kg" ? redondear(n) : redondear(n / LIBRAS_POR_KG);
 }
@@ -42,7 +44,7 @@ export function aKg(valor, unidad) {
 // Converts canonical kilograms into the unit the user wants to see.
 export function desdeKg(kg, unidad) {
   validar(unidad);
-  const n = normalizar(kg);
+  const n = aNumeroONull(kg);
   if (n === null) return null;
   return unidad === "kg" ? redondear(n) : redondear(n * LIBRAS_POR_KG);
 }

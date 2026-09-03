@@ -1,6 +1,7 @@
 import { test, assertEq } from "./pruebas.js";
 import { analizar, importar, hayDatosViejos } from "./migracion.js";
 import { historial, LLAVE_REGISTROS } from "./almacen.js";
+import { aNumeroONull } from "./unidades.js";
 
 function limpiarTodo() {
   for (const k of Object.keys(localStorage)) {
@@ -54,5 +55,48 @@ test("el peso vacío se guarda como null, no como NaN", () => {
   limpiarTodo();
   localStorage.setItem("hierro:h:core:_:0", JSON.stringify([{ d: "2026-08-02", w: "", s: "5", r: "20" }]));
   assertEq(analizar().encontrados[0].pesoKg, null);
+  limpiarTodo();
+});
+
+test("un peso con coma decimal migra correctamente, no se pierde", () => {
+  limpiarTodo();
+  localStorage.setItem("hierro:h:dia1:_:0", JSON.stringify([{ d: "2026-08-03", w: "21,5", s: "4", r: "15" }]));
+  const r = analizar();
+  assertEq(r.encontrados.length, 1);
+  assertEq(r.encontrados[0].pesoKg, 21.5);
+  assertEq(r.huerfanos, []);
+  limpiarTodo();
+});
+
+test("una fila sin fecha se reporta como huérfana, no se pierde en silencio", () => {
+  limpiarTodo();
+  localStorage.setItem("hierro:h:dia1:_:0", JSON.stringify([{ w: "21", s: "4", r: "15" }]));
+  const r = analizar();
+  assertEq(r.encontrados, []);
+  assertEq(r.huerfanos.length, 1);
+  assertEq(r.huerfanos[0].motivo, "registro sin fecha");
+  limpiarTodo();
+});
+
+test("un peso negativo migra como null, igual que en unidades.js", () => {
+  limpiarTodo();
+  localStorage.setItem("hierro:h:dia1:_:0", JSON.stringify([{ d: "2026-08-04", w: "-5", s: "4", r: "15" }]));
+  const r = analizar();
+  assertEq(r.encontrados.length, 1);
+  assertEq(r.encontrados[0].pesoKg, null);
+  limpiarTodo();
+});
+
+test("el parser de número se comporta igual desde unidades.js y desde migracion.js", () => {
+  limpiarTodo();
+  const casos = ["21,5", "-5", "", null, "10", "abc"];
+  localStorage.setItem(
+    "hierro:h:dia1:_:0",
+    JSON.stringify(casos.map((w, i) => ({ d: `2026-08-0${i + 1}`, w, s: "1", r: "1" })))
+  );
+  const r = analizar();
+  for (let i = 0; i < casos.length; i++) {
+    assertEq(r.encontrados[i].pesoKg, aNumeroONull(casos[i]));
+  }
   limpiarTodo();
 });

@@ -4,6 +4,7 @@
 // recoverable from the original data.
 import { MAPA_LEGADO } from "./mapa-legado.js";
 import { guardarRegistro } from "./almacen.js";
+import { aNumeroONull } from "./unidades.js";
 
 const PATRON = /^hierro:h:([^:]+):([^:]+):(\d+)$/;
 
@@ -19,18 +20,14 @@ export function hayDatosViejos() {
   return llavesViejas().length > 0;
 }
 
-function aNumeroONull(v) {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 // Reads every old positional key and translates what it can via
 // MAPA_LEGADO. Never writes anything — callers decide separately whether
 // to persist the result via importar(). A position with no equivalent in
 // MAPA_LEGADO (out of range, or a day/variant combination the map doesn't
 // know) is reported as an orphan rather than silently dropped, same as a
-// row with unreadable JSON or an unexpected shape.
+// row with unreadable JSON, an unexpected shape, a row that isn't an
+// object, or a row missing its date — this is real user training history,
+// and every failure mode must leave a trace instead of vanishing.
 export function analizar() {
   const encontrados = [];
   const huerfanos = [];
@@ -54,7 +51,14 @@ export function analizar() {
       continue;
     }
     for (const f of filas) {
-      if (!f || !f.d) continue;
+      if (!f || typeof f !== "object") {
+        huerfanos.push({ llave, motivo: "registro no es un objeto" });
+        continue;
+      }
+      if (!f.d) {
+        huerfanos.push({ llave, motivo: "registro sin fecha" });
+        continue;
+      }
       encontrados.push({
         slug,
         fecha: f.d,
