@@ -5,9 +5,13 @@
 // nothing here is Node-only.
 import { test, assertEq } from "./pruebas.js";
 import {
-  montarCampos, montarPalomita, montarTemporizador, parseRestSeconds, crearAviso
+  montarCampos, montarPalomita, montarTemporizador, montarHistorial,
+  parseRestSeconds, crearAviso, contarCompletados, reiniciarCompletadosDeHoy
 } from "./registro.js";
-import { guardarRegistro, registroDe, hoyISO, LLAVE_REGISTROS } from "./almacen.js";
+import {
+  guardarRegistro, registroDe, hoyISO,
+  ultimoReinicio, LLAVE_REGISTROS, LLAVE_ULTIMO_RESET
+} from "./almacen.js";
 
 // montarCampos/montarPalomita reciben el renglón de la rutina completo
 // (slot + slug) en vez de un slug suelto: el slot es la llave del almacén y
@@ -22,6 +26,7 @@ import { guardarRegistro, registroDe, hoyISO, LLAVE_REGISTROS } from "./almacen.
 
 function limpiar() {
   localStorage.removeItem(LLAVE_REGISTROS);
+  localStorage.removeItem(LLAVE_ULTIMO_RESET);
 }
 
 // Depth-first search for the first descendant (or `el` itself) matching
@@ -270,4 +275,134 @@ test('sin duración numérica, se dibuja un recuadro estático sin botón para "
   assertEq(estatico !== null, true);
   const n = buscar(li, (el) => el.className === "n");
   assertEq(n.textContent, "Sin descanso");
+});
+
+// --- montarPalomita: avisa al contador de progreso del bloque ---
+
+test("marcar y desmarcar la palomita llaman a alCambiar, para refrescar el contador sin repintar todo", () => {
+  limpiar();
+  const li = document.createElement("li");
+  let llamadas = 0;
+  const input = montarPalomita(li, EJERCICIO, "Sentadilla", crearAviso(), () => { llamadas++; });
+
+  input.checked = true;
+  fire(input, "change");
+  assertEq(llamadas, 1);
+
+  input.checked = false;
+  fire(input, "change");
+  assertEq(llamadas, 2);
+});
+
+// --- contarCompletados: el "N / M completados" de la cabecera del día ---
+
+const BLOQUE_PRUEBA = [
+  { slot: "diaX:base:ej-a", slug: "ej-a" },
+  { slot: "diaX:base:ej-b", slug: "ej-b" },
+  { slot: "diaX:base:ej-c", slug: "ej-c" }
+];
+
+function reg(hecho, extra) {
+  return { fecha: hoyISO(), slug: "x", pesoKg: null, series: null, reps: null, hecho, ...extra };
+}
+
+test("contarCompletados cuenta lo marcado hecho hoy sobre el total del bloque", () => {
+  limpiar();
+  guardarRegistro("diaX:base:ej-a", reg(true));
+  guardarRegistro("diaX:base:ej-b", reg(false));
+  // ej-c: sin registro — cuenta como no hecho, no como error.
+  assertEq(contarCompletados(BLOQUE_PRUEBA), { hechos: 1, total: 3 });
+});
+
+test("contarCompletados no cuenta un hecho de otro día", () => {
+  limpiar();
+  guardarRegistro("diaX:base:ej-a", reg(true, { fecha: "2020-01-01" }));
+  assertEq(contarCompletados(BLOQUE_PRUEBA), { hechos: 0, total: 3 });
+});
+
+// --- reiniciarCompletadosDeHoy: el botón "Reiniciar" ---
+
+test("reiniciarCompletadosDeHoy limpia hecho sin tocar peso, series ni reps", () => {
+  limpiar();
+  guardarRegistro("diaX:base:ej-a", reg(true, { pesoKg: 40, series: 4, reps: "10" }));
+  guardarRegistro("diaX:base:ej-b", reg(true));
+  reiniciarCompletadosDeHoy(BLOQUE_PRUEBA);
+  const a = registroDe("diaX:base:ej-a", hoyISO());
+  assertEq(a.hecho, false);
+  assertEq(a.pesoKg, 40);
+  assertEq(a.series, 4);
+  assertEq(a.reps, "10");
+  assertEq(registroDe("diaX:base:ej-b", hoyISO()).hecho, false);
+});
+
+test("reiniciarCompletadosDeHoy no toca el registro de otros días", () => {
+  limpiar();
+  guardarRegistro("diaX:base:ej-a", reg(true, { fecha: "2020-01-01", pesoKg: 20 }));
+  guardarRegistro("diaX:base:ej-a", reg(true, { pesoKg: 25 }));
+  reiniciarCompletadosDeHoy(BLOQUE_PRUEBA);
+  const viejo = registroDe("diaX:base:ej-a", "2020-01-01");
+  assertEq(viejo.hecho, true);
+  assertEq(viejo.pesoKg, 20);
+  assertEq(registroDe("diaX:base:ej-a", hoyISO()).hecho, false);
+});
+
+test("reiniciarCompletadosDeHoy no crea registros para ejercicios sin marcar", () => {
+  limpiar();
+  reiniciarCompletadosDeHoy(BLOQUE_PRUEBA);
+  assertEq(registroDe("diaX:base:ej-a", hoyISO()), null);
+});
+
+test("reiniciarCompletadosDeHoy registra cuándo fue el último reinicio", () => {
+  limpiar();
+  assertEq(ultimoReinicio(), null);
+  reiniciarCompletadosDeHoy(BLOQUE_PRUEBA);
+  const guardado = ultimoReinicio();
+  assertEq(typeof guardado, "string");
+  assertEq(Number.isNaN(new Date(guardado).getTime()), false);
+});
+
+// --- montarHistorial ---
+
+test("el contador de Historial refleja historial(slug) completo, no solo este renglón", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg(true, { slug: "sentadilla", pesoKg: 30 }));
+  guardarRegistro("dia3:base:sentadilla#2", reg(true, { slug: "sentadilla", pesoKg: 35, fecha: "2026-08-02" }));
+  const contenedor = document.createElement("div");
+  montarHistorial(contenedor, EJERCICIO, "kg");
+  const hc = buscar(contenedor, (el) => el.className === "hc");
+  assertEq(hc.textContent, "(2)");
+});
+
+test("sin registros, el panel dice que aún no hay nada guardado", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  montarHistorial(contenedor, EJERCICIO, "kg");
+  const toggle = buscar(contenedor, (el) => el.className === "hist-toggle");
+  fire(toggle, "click");
+  const vacio = buscar(contenedor, (el) => el.className === "hist-empty");
+  assertEq(vacio !== null, true);
+});
+
+test("un ejercicio con dos renglones etiqueta cada fila del historial con su origen", () => {
+  limpiar();
+  guardarRegistro("dia1:v1:press-militar-barra", reg(true, { slug: "press-militar-barra", pesoKg: 20, fecha: "2026-08-01" }));
+  guardarRegistro("dia1:v1:press-militar-barra#2", reg(true, { slug: "press-militar-barra", pesoKg: 30, fecha: "2026-08-01" }));
+  const contenedor = document.createElement("div");
+  montarHistorial(contenedor, { slot: "dia1:v1:press-militar-barra", slug: "press-militar-barra" }, "kg");
+  const toggle = buscar(contenedor, (el) => el.className === "hist-toggle");
+  fire(toggle, "click");
+  const filas = [...contenedor.querySelectorAll(".hrow .hv")].map((el) => el.textContent);
+  assertEq(filas.length, 2);
+  assertEq(filas.every((t) => t.includes("Brazo 1")), true);
+});
+
+test("un ejercicio con un solo renglón no le agrega etiqueta de origen a sus filas", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg(true, { slug: "sentadilla", pesoKg: 30 }));
+  const contenedor = document.createElement("div");
+  montarHistorial(contenedor, EJERCICIO, "kg");
+  const toggle = buscar(contenedor, (el) => el.className === "hist-toggle");
+  fire(toggle, "click");
+  const fila = buscar(contenedor, (el) => el.className === "hv");
+  assertEq(fila.textContent, "30 kg");
 });

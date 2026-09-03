@@ -9,8 +9,9 @@ import { hoyISO } from "./almacen.js";
 import { urlCalendario, textoICS, nombreArchivoICS } from "./calendario.js";
 import { formatear } from "./unidades.js";
 import {
-  montarCampos, montarPalomita, montarTemporizador,
-  parseRestSeconds, clearAllTimers, crearAviso
+  montarCampos, montarPalomita, montarTemporizador, montarHistorial,
+  parseRestSeconds, clearAllTimers, crearAviso,
+  contarCompletados, reiniciarCompletadosDeHoy
 } from "./registro.js";
 import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
 
@@ -56,7 +57,11 @@ function claveBloqueActivo(d) {
   return d.bloques[0].clave;
 }
 
-export function pintarDia(contenedor, claveDia, unidad) {
+// `alReiniciar`, if given, is called after a confirmed "Reiniciar" tap
+// clears today's checkmarks for the visible block — app.js uses it to
+// refresh the #lastReset footer note without pintarDia needing to know that
+// element exists.
+export function pintarDia(contenedor, claveDia, unidad, alReiniciar) {
   // A running rest timer holds a setInterval closure over nodes that are
   // about to be detached by innerHTML = "" below — without this sweep,
   // switching day tabs mid-countdown leaks an interval that keeps firing
@@ -77,8 +82,8 @@ export function pintarDia(contenedor, claveDia, unidad) {
   // Redrawing the whole day is how a variant change takes effect: the same
   // path a day-tab click takes, so there is only one render path to reason
   // about (and the timer/observer sweeps above run for free).
-  const repintar = () => pintarDia(contenedor, claveDia, unidad);
-  contenedor.appendChild(pintarPanel(d, unidad, repintar));
+  const repintar = () => pintarDia(contenedor, claveDia, unidad, alReiniciar);
+  contenedor.appendChild(pintarPanel(d, unidad, repintar, alReiniciar));
   if (teniaFocoVariante) {
     const activa = contenedor.querySelector('.chip-btn[aria-selected="true"]');
     if (activa) activa.focus();
@@ -110,7 +115,7 @@ function pintarPestana(d, diaActivo, alSeleccionar) {
 // selected block — drawing them all at once (as an earlier version did) puts
 // three rows of the same exercise on screen at the same time, which is what
 // makes a session unreadable and what the variant selector exists to avoid.
-function pintarPanel(d, unidad, repintar) {
+function pintarPanel(d, unidad, repintar, alReiniciar) {
   const section = document.createElement("section");
   section.className = "panel active";
 
@@ -133,7 +138,9 @@ function pintarPanel(d, unidad, repintar) {
   const activo = d.bloques.find((b) => b.clave === clave);
   // With pills on screen the block's own heading would just repeat the
   // selected pill's text, so it is only drawn when there is no selector.
-  section.appendChild(pintarBloque(d, activo, unidad, hoyISO(), d.bloques.length === 1));
+  section.appendChild(
+    pintarBloque(d, activo, unidad, hoyISO(), d.bloques.length === 1, alReiniciar)
+  );
   return section;
 }
 
@@ -170,29 +177,46 @@ function pintarDescanso() {
   return div;
 }
 
-function pintarBloque(d, bloque, unidad, fecha, conTitulo) {
+function pintarBloque(d, bloque, unidad, fecha, conTitulo, alReiniciar) {
   const frag = document.createDocumentFragment();
   if (conTitulo && bloque.etiqueta) {
     const h3 = document.createElement("h3");
     h3.textContent = bloque.etiqueta;
     frag.appendChild(h3);
   }
-  frag.appendChild(pintarListaEjercicios(bloque.ejercicios, unidad));
-  frag.appendChild(pintarAcciones(d, bloque, unidad, fecha));
+  const progreso = pintarProgreso(bloque.ejercicios);
+  const lista = pintarListaEjercicios(bloque.ejercicios, unidad, progreso.actualizar);
+  frag.appendChild(lista);
+  frag.appendChild(pintarAcciones(d, bloque, unidad, fecha, progreso, lista, alReiniciar));
 
   const wrap = document.createElement("div");
   wrap.appendChild(frag);
   return wrap;
 }
 
-function pintarListaEjercicios(ejercicios, unidad) {
+// Builds the "N / M completados" counter for one block, plus an `actualizar`
+// closure the checkboxes call after every change — the live-update the
+// monolith did via a `document.querySelector` and a synthetic
+// data-progress-for attribute; here it's just a bound function instead.
+function pintarProgreso(ejercicios) {
+  const span = document.createElement("span");
+  span.className = "progress-txt";
+  const actualizar = () => {
+    const { hechos, total } = contarCompletados(ejercicios);
+    span.textContent = `${hechos} / ${total} completados`;
+  };
+  actualizar();
+  return { span, actualizar };
+}
+
+function pintarListaEjercicios(ejercicios, unidad, alCambiarProgreso) {
   const ul = document.createElement("ul");
   ul.className = "exlist";
-  ejercicios.forEach((e) => ul.appendChild(pintarEjercicio(e, unidad)));
+  ejercicios.forEach((e) => ul.appendChild(pintarEjercicio(e, unidad, alCambiarProgreso)));
   return ul;
 }
 
-function pintarEjercicio(ejercicioRutina, unidad) {
+function pintarEjercicio(ejercicioRutina, unidad, alCambiarProgreso) {
   const cat = ejercicio(ejercicioRutina.slug);
   const li = document.createElement("li");
   li.className = "ex";
@@ -205,7 +229,7 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   // La palomita va primero: pinta sobre `li` mismo para poder alternar la
   // clase "done" (tachado del nombre, ver estilos.css) sin pedirle a
   // registro.js que conozca la estructura del panel.
-  montarPalomita(li, ejercicioRutina, cat.nombre, aviso);
+  montarPalomita(li, ejercicioRutina, cat.nombre, aviso, alCambiarProgreso);
 
   // Always drawn, even with no numeric duration ("Sin descanso") — the
   // widget itself decides button vs. static box; see montarTemporizador.
@@ -218,6 +242,7 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   body.appendChild(pintarInfoEjercicio(ejercicioRutina, cat, unidad));
   montarImagen(body, ejercicioRutina.slug, cat);
   montarCampos(body, ejercicioRutina, unidad, aviso);
+  montarHistorial(body, ejercicioRutina, unidad);
   li.appendChild(body);
   li.appendChild(aviso);
 
@@ -281,6 +306,34 @@ function formatearLinea(ejercicioRutina, cat, unidad) {
   return bits.join(" — ");
 }
 
+// The "Reiniciar" button clears only today's checkmarks for the block on
+// screen — never pesoKg/series/reps, never other days, never the history —
+// and always behind a confirm(): a stray tap in the gym wiping a session's
+// progress is exactly the accident this guards against. Storage is cleared
+// through registro.js's reiniciarCompletadosDeHoy(); the DOM (checkboxes,
+// the "done" strike-through, the progress counter) is fixed up here
+// directly instead of a full repintar(), so unrelated state — an open
+// history panel, scroll position — survives the reset. `alReiniciar`, if
+// given, runs afterwards so app.js can refresh the #lastReset footer note.
+function pintarBotonReiniciar(bloque, progreso, listaEl, alReiniciar) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "reset-btn";
+  btn.textContent = "Reiniciar";
+  btn.addEventListener("click", () => {
+    const confirmado = window.confirm(
+      "¿Borrar las palomitas de hoy en este bloque? Los pesos, series, reps e historial no se tocan."
+    );
+    if (!confirmado) return;
+    reiniciarCompletadosDeHoy(bloque.ejercicios);
+    listaEl.querySelectorAll(".check").forEach((cb) => { cb.checked = false; });
+    listaEl.querySelectorAll("li.ex").forEach((li) => li.classList.remove("done"));
+    progreso.actualizar();
+    if (alReiniciar) alReiniciar();
+  });
+  return btn;
+}
+
 // One Calendar / .ics pair per block, matching calendario.js's contract of
 // one `entrada` per (dia, bloque). The Calendar link is a real anchor —
 // never a <button> calling window.open(), which is the bug this task
@@ -288,9 +341,13 @@ function formatearLinea(ejercicioRutina, cat, unidad) {
 // is a few lines of text, so encoding it inline needs no createObjectURL
 // (and therefore no matching revokeObjectURL) and can't accumulate across
 // re-renders — which matters here since a phone user retaps day tabs a lot.
-function pintarAcciones(d, bloque, unidad, fecha) {
+// `progreso`/`listaEl` are threaded through only so the reset button can
+// reach them — see pintarBotonReiniciar.
+function pintarAcciones(d, bloque, unidad, fecha, progreso, listaEl, alReiniciar) {
   const div = document.createElement("div");
   div.className = "panel-meta";
+  div.appendChild(progreso.span);
+  div.appendChild(pintarBotonReiniciar(bloque, progreso, listaEl, alReiniciar));
 
   const lineas = bloque.ejercicios.map((e) => formatearLinea(e, ejercicio(e.slug), unidad));
   const entrada = { dia: d, bloque, lineas, fecha };

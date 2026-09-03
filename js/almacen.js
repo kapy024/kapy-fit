@@ -17,6 +17,11 @@ export const LLAVE_PREFS = "hierro3:prefs";
 // or explicitly dismissed), so app.js stops re-offering it on every load —
 // its own key, separate from prefs/registros, since it isn't a preference.
 export const LLAVE_MIGRACION = "hierro3:migracion";
+// When the "Reiniciar" button on a day's panel was last used. Purely
+// informational (the #lastReset footer note in index.html) — never read to
+// decide what to clear, so a corrupted or missing value can't affect a
+// reset itself.
+export const LLAVE_ULTIMO_RESET = "hierro3:ultimoReset";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -182,4 +187,16 @@ export function migracionResuelta() {
 // contract as every other write here.
 export function marcarMigracionResuelta() {
   return escribirJSON(LLAVE_MIGRACION, true);
+}
+
+// Returns the ISO timestamp of the last confirmed "Reiniciar" tap, or null
+// if it has never happened.
+export function ultimoReinicio() {
+  return leerJSON(LLAVE_ULTIMO_RESET, null);
+}
+
+// Records "now" as the last reset time. Returns true if persisted, false if
+// storage refused it — same contract as every other write here.
+export function guardarUltimoReinicio() {
+  return escribirJSON(LLAVE_ULTIMO_RESET, new Date().toISOString());
 }

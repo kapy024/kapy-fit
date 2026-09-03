@@ -4,8 +4,9 @@
 // own storage key, and two sets of the same exercise inside one block are
 // two slots, so they never overwrite each other. The `slug` rides along in
 // every record so historial(slug) can follow the exercise across slots.
-import { guardarRegistro, registroDe, hoyISO } from "./almacen.js";
-import { aKg, desdeKg, aNumeroONull } from "./unidades.js";
+import { guardarRegistro, registroDe, historial, hoyISO, guardarUltimoReinicio } from "./almacen.js";
+import { aKg, desdeKg, aNumeroONull, formatear } from "./unidades.js";
+import { etiquetaSlot } from "./rutina.js";
 
 // --- lectura/escritura del registro de hoy ---
 
@@ -62,6 +63,35 @@ function mostrarAviso(el, mensaje) {
 function ocultarAviso(el) {
   if (!el) return;
   el.hidden = true;
+}
+
+// Counts how many of `ejercicios` are marked done today — the block's
+// "N / M completados" counter. Reads today's record the same way
+// registroDeHoy does (registroDe + hoyISO), so it never disagrees with what
+// montarPalomita just wrote.
+export function contarCompletados(ejercicios) {
+  const hoy = hoyISO();
+  const hechos = ejercicios.filter((e) => !!registroDe(e.slot, hoy)?.hecho).length;
+  return { hechos, total: ejercicios.length };
+}
+
+// Clears `hecho` for today on every exercise in `ejercicios` that is
+// currently marked done, leaving pesoKg/series/reps — and every other
+// day's history — untouched. This is the "Reiniciar" button's entire
+// contract (see render.js, which also asks for confirmation before calling
+// this). Exercises with no record today, or already undone, are skipped
+// so a reset never creates an empty record for a row nobody touched.
+// Also stamps the last-reset timestamp so the footer note can tell the
+// user when it last happened.
+export function reiniciarCompletadosDeHoy(ejercicios) {
+  const hoy = hoyISO();
+  for (const { slot } of ejercicios) {
+    const registro = registroDe(slot, hoy);
+    if (registro && registro.hecho) {
+      guardarRegistro(slot, { ...registro, hecho: false });
+    }
+  }
+  guardarUltimoReinicio();
 }
 
 // --- construcción de campos ---
@@ -151,8 +181,10 @@ export function montarCampos(contenedor, ejercicioRutina, unidad, aviso) {
 // exercise's display name, so the aria-label says what is being marked
 // done instead of a label every checkbox on the page shares (VoiceOver has
 // no other way to tell them apart). `aviso` is the row's single shared
-// save-warning element — see montarCampos.
-export function montarPalomita(contenedor, ejercicioRutina, nombre, aviso) {
+// save-warning element — see montarCampos. `alCambiar`, if given, runs
+// after every change (successful or not) so the block's progress counter
+// (render.js) can refresh without a full repaint.
+export function montarPalomita(contenedor, ejercicioRutina, nombre, aviso, alCambiar) {
   const { slot, slug } = ejercicioRutina;
   const registro = registroDeHoy(slot, slug);
 
@@ -175,6 +207,7 @@ export function montarPalomita(contenedor, ejercicioRutina, nombre, aviso) {
     const hechoReal = ok ? deseado : !!registroDeHoy(slot, slug).hecho;
     input.checked = hechoReal;
     contenedor.classList.toggle("done", hechoReal);
+    if (alCambiar) alCambiar();
   });
 
   wrap.appendChild(input);
@@ -340,4 +373,86 @@ export function montarTemporizador(contenedor, segundos, etiqueta, nombre) {
   wrap.append(btn, cap);
   contenedor.appendChild(wrap);
   return btn;
+}
+
+// --- historial por ejercicio ---
+
+// One history row's numbers as "40 kg · 4 series · 10 reps", omitting
+// whichever of weight/series/reps the record doesn't have. `unidad` only
+// affects how the stored kg is displayed, same as everywhere else — the
+// record itself always stays in kg.
+function formatearFilaHistorial(registro, unidad) {
+  const bits = [];
+  const peso = formatear(registro.pesoKg, unidad);
+  if (peso) bits.push(peso);
+  if (registro.series != null && registro.series !== "") bits.push(`${registro.series} series`);
+  if (registro.reps) bits.push(`${registro.reps} reps`);
+  return bits.length ? bits.join(" · ") : "—";
+}
+
+// "AAAA-MM-DD" -> "DD/MM". Built by hand instead of Date#toLocaleDateString:
+// that formats the same ISO date differently across browser engines, which
+// would make the history panel's dates inconsistent for no reason.
+function formatearFechaCorta(fechaISO) {
+  const [, mes, dia] = fechaISO.split("-");
+  return `${dia}/${mes}`;
+}
+
+// Draws the collapsible per-exercise history: a "Historial (N)" toggle and
+// a panel listing past sessions, most recent first. Reads historial(slug) —
+// which mixes every slot sharing this slug, since the same exercise can sit
+// in more than one day/variant, and even twice in the same block (día 1's
+// light and heavy press militar). When more than one distinct slot shows up
+// in the list, every row is labeled with etiquetaSlot(r.slot) so two
+// numbers logged the same day are never left unexplained. The panel body is
+// built lazily on first open, not at draw time, so a day with many
+// exercises doesn't pay to compute history nobody looks at.
+export function montarHistorial(contenedor, ejercicioRutina, unidad) {
+  const { slug } = ejercicioRutina;
+  const registros = historial(slug);
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "hist-toggle";
+  const contador = document.createElement("span");
+  contador.className = "hc";
+  contador.textContent = `(${registros.length})`;
+  toggle.append("Historial ", contador);
+
+  const panel = document.createElement("div");
+  panel.className = "hist-panel";
+  panel.hidden = true;
+
+  let dibujado = false;
+  function dibujarPanel() {
+    if (dibujado) return;
+    dibujado = true;
+    if (registros.length === 0) {
+      panel.innerHTML =
+        '<div class="hist-empty">Aún no hay registros guardados. Se guardan cuando marcas el ejercicio como hecho.</div>';
+      return;
+    }
+    const ordenados = [...registros].reverse();
+    const slotsDistintos = new Set(ordenados.map((r) => r.slot)).size > 1;
+    ordenados.forEach((r) => {
+      const fila = document.createElement("div");
+      fila.className = "hrow";
+      const fecha = document.createElement("span");
+      fecha.className = "hd";
+      fecha.textContent = formatearFechaCorta(r.fecha);
+      const valor = document.createElement("span");
+      valor.className = "hv";
+      const texto = formatearFilaHistorial(r, unidad);
+      valor.textContent = slotsDistintos ? `${texto} (${etiquetaSlot(r.slot)})` : texto;
+      fila.append(fecha, valor);
+      panel.appendChild(fila);
+    });
+  }
+
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) dibujarPanel();
+  });
+
+  contenedor.append(toggle, panel);
 }

@@ -232,6 +232,26 @@ export function todosLosSlots() {
   return lista;
 }
 
+// Human label for a slot, for history rows that mix several slots sharing
+// one slug (e.g. día 1's light and heavy "press militar", or "crunch"
+// logged from both día 2 and día 4) — without it those rows are just two
+// unexplained numbers on the same date. Falls back to the raw slot string
+// for one that no longer exists in RUTINA (a stale record from a routine
+// edit) rather than throwing, since a history panel must still render the
+// rest of the rows. Includes a "(n/total)" position only when the slug
+// actually repeats within that block — the day-1 "#2" case.
+export function etiquetaSlot(slot) {
+  const [claveDia, claveBloque] = slot.split(":");
+  const d = RUTINA.find((x) => x.clave === claveDia);
+  const b = d ? bloque(claveDia, claveBloque) : null;
+  const e = ejercicioPorSlot(slot);
+  if (!d || !b || !e) return slot;
+  const base = d.bloques.length > 1 ? `${d.etiqueta} · ${b.etiqueta}` : d.etiqueta;
+  const mismos = b.ejercicios.filter((x) => x.slug === e.slug);
+  if (mismos.length <= 1) return base;
+  return `${base} (${mismos.indexOf(e) + 1}/${mismos.length})`;
+}
+
 export function todosLosSlugs() {
   const set = new Set();
   for (const d of RUTINA) {

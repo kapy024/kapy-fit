@@ -2,7 +2,8 @@
 import { RUTINA } from "./rutina.js";
 import { pintarNav, pintarDia } from "./render.js";
 import {
-  preferencias, guardarPreferencias, migracionResuelta, marcarMigracionResuelta
+  preferencias, guardarPreferencias, migracionResuelta, marcarMigracionResuelta,
+  ultimoReinicio
 } from "./almacen.js";
 import { hayDatosViejos, analizar, importar } from "./migracion.js";
 
@@ -11,13 +12,35 @@ const panels = document.getElementById("panels");
 const btnKg = document.getElementById("btnKg");
 const btnLb = document.getElementById("btnLb");
 const unidadWarn = document.getElementById("unidadWarn");
+const lastReset = document.getElementById("lastReset");
 
 let diaActivo = RUTINA[0].clave;
 let unidad = preferencias().unidad;
 
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// Formats the last-reset ISO timestamp by hand ("3 sep, 14:05") instead of
+// Date#toLocaleString, whose output format for the same input isn't
+// consistent across browser engines.
+function formatearFechaHora(iso) {
+  const d = new Date(iso);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getDate()} ${MESES[d.getMonth()]}, ${hh}:${mm}`;
+}
+
+// Keeps the footer's "último reinicio" note in sync with storage — called
+// on load and again every time render.js's reset button is confirmed
+// (see refrescar below), so a tap in one day panel is reflected even
+// though the footer sits outside anything render.js redraws.
+function pintarUltimoReinicio() {
+  const iso = ultimoReinicio();
+  lastReset.textContent = iso ? `Último reinicio: ${formatearFechaHora(iso)}` : "";
+}
+
 function refrescar() {
   pintarNav(nav, diaActivo, seleccionar);
-  pintarDia(panels, diaActivo, unidad);
+  pintarDia(panels, diaActivo, unidad, pintarUltimoReinicio);
 }
 
 function seleccionar(clave) {
@@ -111,4 +134,5 @@ function pintarAvisoMigracion() {
 }
 
 pintarAvisoMigracion();
+pintarUltimoReinicio();
 refrescar();
