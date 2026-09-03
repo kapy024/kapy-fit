@@ -19,8 +19,14 @@ test("la URL trae el rango de todo el día con el día siguiente como fin", () =
 
 test("el título va codificado y no rompe la URL", () => {
   const u = urlCalendario(ENTRADA);
-  assertEq(u.includes("Pierna"), false);       // debe ir escapado
+  // encodeURIComponent deja el ASCII simple tal cual: "Pierna" aparece literal
+  // y eso está bien. Lo que no puede aparecer crudo es lo que parte una URL:
+  // espacios, acentos, la raya y los dos puntos del título.
+  assertEq(u.includes(" "), false, "espacio crudo en la URL");
+  assertEq(u.includes("Día"), false, "acento sin codificar");
+  assertEq(u.includes("—"), false, "raya sin codificar");
   assertEq(u.includes("text=Entrenamiento"), true);
+  assertEq(u.includes("D%C3%ADa%203"), true, "el acento se codificó como UTF-8");
 });
 
 test("el .ics trae las líneas obligatorias del formato", () => {
