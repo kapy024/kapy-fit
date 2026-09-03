@@ -24,7 +24,8 @@ export function correoValido(texto) {
 export async function sesionActual() {
   if (!hayConfig()) return null;
   try {
-    const { data, error } = await cliente().auth.getSession();
+    const c = await cliente();
+    const { data, error } = await c.auth.getSession();
     if (error) return null;
     return data.session ?? null;
   } catch (_e) {
@@ -43,7 +44,8 @@ export async function enviarEnlace(correo) {
     return { ok: false, detalle: "sin configuración de Supabase" };
   }
   try {
-    const { error } = await cliente().auth.signInWithOtp({
+    const c = await cliente();
+    const { error } = await c.auth.signInWithOtp({
       email: correo.trim(),
       options: { emailRedirectTo: location.origin + location.pathname }
     });
@@ -59,7 +61,8 @@ export async function enviarEnlace(correo) {
 export async function cerrarSesion() {
   if (!hayConfig()) return { ok: false, detalle: "sin configuración de Supabase" };
   try {
-    const { error } = await cliente().auth.signOut();
+    const c = await cliente();
+    const { error } = await c.auth.signOut();
     if (error) return { ok: false, detalle: error.message };
     return { ok: true, detalle: "sesión cerrada" };
   } catch (e) {
@@ -68,16 +71,32 @@ export async function cerrarSesion() {
 }
 
 // Wraps onAuthStateChange: fn(sesion|null) fires on sign-in, sign-out and
-// token refresh. Returns an unsubscribe function; with no config there is
-// nothing to observe, so it hands back a no-op instead of failing.
+// token refresh. Returns an unsubscribe function synchronously — building
+// the client is async (see db.js), so subscribing happens inside a fire-and
+// -forget async task; if that task hasn't finished yet, the returned
+// unsubscribe just marks it to skip subscribing once it does. With no
+// config, or if the client never loads, there is nothing to observe, so
+// fn is simply never called rather than the caller having to handle a
+// rejection.
 export function alCambiarSesion(fn) {
   if (!hayConfig()) return () => {};
-  try {
-    const { data } = cliente().auth.onAuthStateChange((_evento, sesion) => {
-      fn(sesion ?? null);
-    });
-    return () => data.subscription.unsubscribe();
-  } catch (_e) {
-    return () => {};
-  }
+  let cancelada = false;
+  let desuscribir = () => {};
+  (async () => {
+    try {
+      const c = await cliente();
+      if (cancelada) return;
+      const { data } = c.auth.onAuthStateChange((_evento, sesion) => {
+        fn(sesion ?? null);
+      });
+      desuscribir = () => data.subscription.unsubscribe();
+    } catch (_e) {
+      // No library, no observation — the caller keeps working from
+      // localStorage, same as if config were absent.
+    }
+  })();
+  return () => {
+    cancelada = true;
+    desuscribir();
+  };
 }

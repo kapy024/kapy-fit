@@ -2,13 +2,35 @@
 // offers to turn sync on or off — it never gates the routine, which already
 // works from localStorage with no session at all (see almacen.js).
 import { sesionActual, enviarEnlace, cerrarSesion, alCambiarSesion, correoValido } from "./auth.js";
-import { hayConfig } from "./db.js";
+import { hayConfig, libreriaDisponible } from "./db.js";
+
+// The real collaborators, used whenever a caller doesn't override them.
+// sesion-ui.test.js passes fakes here instead, to drive sesionActual() and
+// alCambiarSesion() in a controlled order without touching the network —
+// see the race-condition test for why that control matters.
+const DEPENDENCIAS_REALES = { sesionActual, enviarEnlace, cerrarSesion, alCambiarSesion, correoValido, libreriaDisponible };
+
+let contadorInstancias = 0;
 
 // Mounts the widget into `contenedor` (an empty element already in the
 // page). With no Supabase config there is nothing to sign into, so it
 // mounts nothing rather than show a form that can only fail.
-export function montarSesion(contenedor) {
+//
+// Idempotent: a second call on a container that already has the widget is a
+// no-op, so moving *when* this gets called (see app.js) can never risk a
+// duplicate .sesion block or a second alCambiarSesion subscription.
+export function montarSesion(contenedor, deps = DEPENDENCIAS_REALES) {
   if (!hayConfig()) return;
+  if (contenedor.dataset.sesionMontada === "1") return;
+  contenedor.dataset.sesionMontada = "1";
+
+  const {
+    sesionActual: leerSesion, enviarEnlace: mandarEnlace, cerrarSesion: salir,
+    alCambiarSesion: observarCambios, correoValido: esCorreoValido,
+    libreriaDisponible: hayLibreria
+  } = deps;
+
+  const idInput = `sesionCorreo${++contadorInstancias}`;
 
   const bloque = document.createElement("div");
   bloque.className = "sesion";
@@ -16,11 +38,20 @@ export function montarSesion(contenedor) {
 
   let sesion = null;
   let correoEnviado = null;
+  let sinLibreria = false;
+  // Guards the *initial* read only: sesionActual() and alCambiarSesion()'s
+  // first callback both answer "what's the session right now?" at mount
+  // time, and whichever answers first should decide it — not whichever
+  // happens to settle last. See the race-condition test below for the
+  // failure this prevents. Every alCambiarSesion callback after the first
+  // is a genuine, later change and always applies regardless of this flag.
+  let sesionInicialResuelta = false;
 
   function pintar() {
     bloque.innerHTML = "";
     if (sesion) pintarConSesion();
     else if (correoEnviado) pintarEnviado();
+    else if (sinLibreria) pintarSinLibreria();
     else pintarFormulario();
   }
 
@@ -35,27 +66,49 @@ export function montarSesion(contenedor) {
     btn.textContent = "Cerrar sesión";
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      await cerrarSesion();
+      await salir();
       btn.disabled = false;
     });
 
     bloque.append(correo, btn);
   }
 
+  // role="status" + aria-live so a screen reader announces the confirmation
+  // without the user having to go find it — it replaces the form, so
+  // nothing else on screen would otherwise point at it.
   function pintarEnviado() {
     const msg = document.createElement("span");
     msg.className = "sesion-msg";
+    msg.setAttribute("role", "status");
+    msg.setAttribute("aria-live", "polite");
     msg.textContent = `Te mandé un enlace a ${correoEnviado}. Ábrelo en este mismo dispositivo.`;
     bloque.append(msg);
   }
 
+  // Shown instead of the form once we know the client library itself
+  // couldn't load (see libreriaDisponible in db.js) — a form that can only
+  // fail every submit is worse than saying up front that sync is off.
+  function pintarSinLibreria() {
+    const aviso = document.createElement("span");
+    aviso.className = "sesion-msg";
+    aviso.setAttribute("role", "status");
+    aviso.setAttribute("aria-live", "polite");
+    aviso.textContent = "Sin conexión — se guarda en este dispositivo.";
+    bloque.append(aviso);
+  }
+
   function pintarFormulario() {
+    const etiqueta = document.createElement("label");
+    etiqueta.className = "sesion-label";
+    etiqueta.htmlFor = idInput;
+    etiqueta.textContent = "Correo";
+
     const input = document.createElement("input");
     input.type = "email";
+    input.id = idInput;
     input.className = "sesion-input";
     input.placeholder = "tu@correo.com";
     input.autocomplete = "email";
-    input.setAttribute("aria-label", "Correo para el enlace de acceso");
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -64,6 +117,8 @@ export function montarSesion(contenedor) {
 
     const err = document.createElement("span");
     err.className = "sesion-err";
+    err.setAttribute("role", "status");
+    err.setAttribute("aria-live", "polite");
     err.hidden = true;
 
     const nota = document.createElement("span");
@@ -72,7 +127,7 @@ export function montarSesion(contenedor) {
 
     async function enviar() {
       const correo = input.value;
-      if (!correoValido(correo)) {
+      if (!esCorreoValido(correo)) {
         err.textContent = "Escribe un correo válido.";
         err.hidden = false;
         return;
@@ -80,7 +135,7 @@ export function montarSesion(contenedor) {
       err.hidden = true;
       btn.disabled = true;
       btn.textContent = "Enviando…";
-      const r = await enviarEnlace(correo);
+      const r = await mandarEnlace(correo);
       btn.disabled = false;
       btn.textContent = "Enviarme el enlace";
       if (r.ok) {
@@ -97,19 +152,32 @@ export function montarSesion(contenedor) {
       if (e.key === "Enter") enviar();
     });
 
-    bloque.append(input, btn, err, nota);
+    bloque.append(etiqueta, input, btn, err, nota);
   }
 
   pintar();
 
-  alCambiarSesion((nuevaSesion) => {
+  // Registered before sesionActual() resolves (see below) rather than
+  // after, so a session-change event that arrives while that first read is
+  // still in flight is never missed.
+  observarCambios((nuevaSesion) => {
+    sesionInicialResuelta = true;
     sesion = nuevaSesion;
     correoEnviado = null;
     pintar();
   });
 
-  sesionActual().then((s) => {
+  leerSesion().then((s) => {
+    if (sesionInicialResuelta) return; // observarCambios already settled it
+    sesionInicialResuelta = true;
     sesion = s;
     pintar();
+  });
+
+  hayLibreria().then((ok) => {
+    if (!ok) {
+      sinLibreria = true;
+      pintar();
+    }
   });
 }

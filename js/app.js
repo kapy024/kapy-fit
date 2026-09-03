@@ -6,7 +6,6 @@ import {
   ultimoReinicio
 } from "./almacen.js";
 import { hayDatosViejos, analizar, importar } from "./migracion.js";
-import { montarSesion } from "./sesion-ui.js";
 
 const nav = document.getElementById("dayNav");
 const panels = document.getElementById("panels");
@@ -134,7 +133,20 @@ function pintarAvisoMigracion() {
   else pintarBanner();
 }
 
-montarSesion(document.getElementById("sesionSlot"));
 pintarAvisoMigracion();
 pintarUltimoReinicio();
 refrescar();
+
+// Mounted last, after the routine is already on screen, and through a
+// dynamic import with its own catch: sesion-ui.js's chain reaches all the
+// way to the Supabase CDN (via auth.js -> db.js), and nothing in that chain
+// may ever be allowed to stop this file from drawing the routine above —
+// that's the whole point of it being dynamic instead of a static import at
+// the top of this module. If it can't load at all, the slot is left with a
+// discreet note instead of a half-built widget.
+const sesionSlot = document.getElementById("sesionSlot");
+import("./sesion-ui.js")
+  .then(({ montarSesion }) => montarSesion(sesionSlot))
+  .catch(() => {
+    sesionSlot.textContent = "Sin conexión — se guarda en este dispositivo.";
+  });
