@@ -65,3 +65,35 @@ test("un JSON corrupto no tumba la app", () => {
   assertEq(historial("sentadilla"), []);
   limpiar();
 });
+
+test("guardarRegistro devuelve true cuando persiste", () => {
+  limpiar();
+  assertEq(guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true }), true);
+});
+
+test("guardarRegistro devuelve false cuando el almacenamiento falla", () => {
+  limpiar();
+  const original = localStorage.setItem;
+  localStorage.setItem = () => {
+    throw new DOMException("cuota llena", "QuotaExceededError");
+  };
+  try {
+    assertEq(guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true }), false);
+  } finally {
+    localStorage.setItem = original;
+  }
+});
+
+test("preferencias() cae a kg ante una unidad guardada inválida", () => {
+  limpiar();
+  localStorage.setItem(LLAVE_PREFS, JSON.stringify({ unidad: "stones" }));
+  assertEq(preferencias().unidad, "kg");
+  limpiar();
+});
+
+test("guardarRegistro reemplaza el registro por completo, no hace merge", () => {
+  limpiar();
+  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true });
+  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 22, series: 3, reps: "8", hecho: false });
+  assertEq(registroDe("sentadilla", "2026-09-02"), { fecha: "2026-09-02", pesoKg: 22, series: 3, reps: "8", hecho: false });
+});
