@@ -1,6 +1,7 @@
 .DS_Store
-# Credenciales locales: la anon key se commitea hasta la entrega 2,
-# junto con las políticas RLS que la hacen segura.
+# Copia de trabajo de credenciales. La anon key vive en config.js, que SÍ se
+# versiona: es pública por diseño y RLS (sql/002_rls.sql) es lo que protege.
+# La service_role key nunca entra al repo.
 config.local.js
 .superpowers/
 .claude/
