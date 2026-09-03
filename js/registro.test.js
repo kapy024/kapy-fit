@@ -7,6 +7,11 @@ import { test, assertEq } from "./pruebas.js";
 import { montarCampos, montarPalomita, montarTemporizador, parseRestSeconds } from "./registro.js";
 import { guardarRegistro, registroDe, hoyISO, LLAVE_REGISTROS } from "./almacen.js";
 
+// montarCampos/montarPalomita reciben el renglón de la rutina completo
+// (slot + slug) en vez de un slug suelto: el slot es la llave del almacén y
+// el slug viaja dentro del registro. Las pruebas de abajo se adaptaron a esa
+// firma; lo que verifican no cambió.
+
 function limpiar() {
   localStorage.removeItem(LLAVE_REGISTROS);
 }
@@ -37,41 +42,74 @@ function fire(el, tipo) {
   el.dispatchEvent(new Event(tipo));
 }
 
-const EJERCICIO = { slug: "sentadilla", series: "4", reps: "10" };
+const SLOT = "dia3:base:sentadilla";
+const EJERCICIO = { slot: SLOT, slug: "sentadilla", series: "4", reps: "10" };
 
 // --- montarCampos: peso/series/reps ---
 
 test("un peso capturado en libras se persiste en kilos", () => {
   limpiar();
   const contenedor = document.createElement("div");
-  montarCampos(contenedor, "sentadilla", EJERCICIO, "lb");
+  montarCampos(contenedor, EJERCICIO, "lb");
   const inputPeso = inputConClase(contenedor, "f-w");
   inputPeso.value = "100";
   fire(inputPeso, "change");
-  assertEq(registroDe("sentadilla", hoyISO()).pesoKg, 45.4);
+  assertEq(registroDe(SLOT, hoyISO()).pesoKg, 45.4);
 });
 
 test("el peso se persiste en change, no en cada tecla (input)", () => {
   limpiar();
   const contenedor = document.createElement("div");
-  montarCampos(contenedor, "sentadilla", EJERCICIO, "kg");
+  montarCampos(contenedor, EJERCICIO, "kg");
   const inputPeso = inputConClase(contenedor, "f-w");
   inputPeso.value = "50";
   fire(inputPeso, "input");
-  assertEq(registroDe("sentadilla", hoyISO()), null);
+  assertEq(registroDe(SLOT, hoyISO()), null);
   fire(inputPeso, "change");
-  assertEq(registroDe("sentadilla", hoyISO()).pesoKg, 50);
+  assertEq(registroDe(SLOT, hoyISO()).pesoKg, 50);
+});
+
+test("el registro guardado desde los campos incluye el slug", () => {
+  limpiar();
+  const contenedor = document.createElement("div");
+  montarCampos(contenedor, EJERCICIO, "kg");
+  const inputPeso = inputConClase(contenedor, "f-w");
+  inputPeso.value = "60";
+  fire(inputPeso, "change");
+  assertEq(registroDe(SLOT, hoyISO()).slug, "sentadilla");
+});
+
+// El bug reportado: dos series del mismo ejercicio en el mismo bloque
+// compartían renglón, así que la segunda borraba lo escrito en la primera.
+test("dos renglones del mismo slug capturan por separado", () => {
+  limpiar();
+  const ligero = { slot: "dia1:v1:press-militar-barra", slug: "press-militar-barra" };
+  const pesado = { slot: "dia1:v1:press-militar-barra#2", slug: "press-militar-barra" };
+  const a = document.createElement("div");
+  const b = document.createElement("div");
+  montarCampos(a, ligero, "kg");
+  montarCampos(b, pesado, "kg");
+
+  const pesoA = inputConClase(a, "f-w");
+  pesoA.value = "30";
+  fire(pesoA, "change");
+  const pesoB = inputConClase(b, "f-w");
+  pesoB.value = "12";
+  fire(pesoB, "change");
+
+  assertEq(registroDe(ligero.slot, hoyISO()).pesoKg, 30);
+  assertEq(registroDe(pesado.slot, hoyISO()).pesoKg, 12);
 });
 
 // --- montarPalomita ---
 
 test("desmarcar la palomita deja hecho:false sin borrar el peso", () => {
   limpiar();
-  guardarRegistro("sentadilla", {
-    fecha: hoyISO(), pesoKg: 40, series: "4", reps: "10", hecho: true
+  guardarRegistro(SLOT, {
+    fecha: hoyISO(), slug: "sentadilla", pesoKg: 40, series: "4", reps: "10", hecho: true
   });
   const li = document.createElement("li");
-  const input = montarPalomita(li, "sentadilla");
+  const input = montarPalomita(li, EJERCICIO);
   assertEq(input.checked, true);
 
   // El navegador ya volteó `checked` antes de disparar "change" — se
@@ -79,7 +117,7 @@ test("desmarcar la palomita deja hecho:false sin borrar el peso", () => {
   input.checked = false;
   fire(input, "change");
 
-  const registro = registroDe("sentadilla", hoyISO());
+  const registro = registroDe(SLOT, hoyISO());
   assertEq(registro.hecho, false);
   assertEq(registro.pesoKg, 40);
 });
@@ -87,7 +125,7 @@ test("desmarcar la palomita deja hecho:false sin borrar el peso", () => {
 test("un guardado fallido muestra el aviso y no deja el ejercicio como hecho", () => {
   limpiar();
   const li = document.createElement("li");
-  const input = montarPalomita(li, "sentadilla");
+  const input = montarPalomita(li, EJERCICIO);
   const avisoEl = aviso(li);
   assertEq(avisoEl.hidden, true);
 
@@ -105,7 +143,7 @@ test("un guardado fallido muestra el aviso y no deja el ejercicio como hecho", (
   assertEq(avisoEl.hidden, false);
   assertEq(input.checked, false);
   assertEq(li.classList.contains("done"), false);
-  assertEq(registroDe("sentadilla", hoyISO()), null);
+  assertEq(registroDe(SLOT, hoyISO()), null);
 });
 
 // --- parseRestSeconds ---

@@ -1,18 +1,21 @@
 // Capture layer: weight/sets/reps inputs, the done checkbox, and the rest
-// timer. Everything here writes through almacen.js keyed by exercise slug
-// — no field ever invents its own storage key, so a slug that repeats
-// across days (or within one) always shares the same underlying record.
+// timer. Everything here writes through almacen.js keyed by the exercise's
+// SLOT (its row in the routine, see rutina.js) — no field ever invents its
+// own storage key, and two sets of the same exercise inside one block are
+// two slots, so they never overwrite each other. The `slug` rides along in
+// every record so historial(slug) can follow the exercise across slots.
 import { guardarRegistro, registroDe, hoyISO } from "./almacen.js";
 import { aKg, desdeKg } from "./unidades.js";
 
 // --- lectura/escritura del registro de hoy ---
 
-// Returns today's record for `slug`, or a blank skeleton ready to merge
+// Returns today's record for `slot`, or a blank skeleton ready to merge
 // into when nothing has been captured yet today.
-function registroDeHoy(slug) {
+function registroDeHoy(slot, slug) {
   return (
-    registroDe(slug, hoyISO()) ?? {
+    registroDe(slot, hoyISO()) ?? {
       fecha: hoyISO(),
+      slug,
       pesoKg: null,
       series: null,
       reps: null,
@@ -22,16 +25,16 @@ function registroDeHoy(slug) {
 }
 
 // Re-reads today's current record (never a stale closure — a sibling
-// field, or the same slug rendered on another day tab, may have written
-// since this control was drawn), merges `cambios` on top and persists.
-// `fecha` is always set to hoyISO() explicitly so a panel left open past
-// midnight still writes to the right day. Surfaces a failed write (quota
-// full, private mode) via `avisoEl` instead of leaving the user thinking
-// it saved.
-function actualizarRegistroDeHoy(slug, cambios, avisoEl) {
-  const actual = registroDeHoy(slug);
-  const siguiente = { ...actual, ...cambios, fecha: hoyISO() };
-  const ok = guardarRegistro(slug, siguiente);
+// field on the same row may have written since this control was drawn),
+// merges `cambios` on top and persists. `fecha` is always set to hoyISO()
+// explicitly so a panel left open past midnight still writes to the right
+// day, and `slug` is re-stamped so a record saved before it existed still
+// gains it. Surfaces a failed write (quota full, private mode) via
+// `avisoEl` instead of leaving the user thinking it saved.
+function actualizarRegistroDeHoy(slot, slug, cambios, avisoEl) {
+  const actual = registroDeHoy(slot, slug);
+  const siguiente = { ...actual, ...cambios, fecha: hoyISO(), slug };
+  const ok = guardarRegistro(slot, siguiente);
   if (avisoEl) avisoEl.hidden = ok;
   return ok;
 }
@@ -62,11 +65,14 @@ function campoTexto(etiqueta, clase, valorInicial, placeholder, inputmode) {
 }
 
 // Draws the peso/series/reps row for one exercise and wires each field to
-// persist on `change` (not on every keystroke, per brief). `unidad` only
-// affects how the stored kg is shown/typed here — aKg() converts back to
-// kg before every save, so a pound never reaches storage as-is.
-export function montarCampos(contenedor, slug, ejercicioRutina, unidad) {
-  const registro = registroDeHoy(slug);
+// persist on `change` (not on every keystroke, per brief). `ejercicioRutina`
+// is the routine row itself: it carries both the `slot` these fields write
+// to and the `slug` stored inside the record. `unidad` only affects how the
+// stored kg is shown/typed here — aKg() converts back to kg before every
+// save, so a pound never reaches storage as-is.
+export function montarCampos(contenedor, ejercicioRutina, unidad) {
+  const { slot, slug } = ejercicioRutina;
+  const registro = registroDeHoy(slot, slug);
   const aviso = crearAviso();
 
   const pesoMostrado =
@@ -81,15 +87,15 @@ export function montarCampos(contenedor, slug, ejercicioRutina, unidad) {
 
   campoPeso.input.addEventListener("change", () => {
     const kg = aKg(campoPeso.input.value, unidad);
-    actualizarRegistroDeHoy(slug, { pesoKg: kg }, aviso);
+    actualizarRegistroDeHoy(slot, slug, { pesoKg: kg }, aviso);
   });
   campoSeries.input.addEventListener("change", () => {
     const valor = campoSeries.input.value.trim() || null;
-    actualizarRegistroDeHoy(slug, { series: valor }, aviso);
+    actualizarRegistroDeHoy(slot, slug, { series: valor }, aviso);
   });
   campoReps.input.addEventListener("change", () => {
     const valor = campoReps.input.value.trim() || null;
-    actualizarRegistroDeHoy(slug, { reps: valor }, aviso);
+    actualizarRegistroDeHoy(slot, slug, { reps: valor }, aviso);
   });
 
   const track = document.createElement("div");
@@ -106,8 +112,9 @@ export function montarCampos(contenedor, slug, ejercicioRutina, unidad) {
 // shows `aviso` and, since nothing actually persisted, reconciles both the
 // checkbox and the strike-through with what's really on disk instead of
 // leaving them showing the tap the user just made.
-export function montarPalomita(contenedor, slug) {
-  const registro = registroDeHoy(slug);
+export function montarPalomita(contenedor, ejercicioRutina) {
+  const { slot, slug } = ejercicioRutina;
+  const registro = registroDeHoy(slot, slug);
   const aviso = crearAviso();
 
   const wrap = document.createElement("span");
@@ -121,8 +128,8 @@ export function montarPalomita(contenedor, slug) {
 
   input.addEventListener("change", () => {
     const deseado = input.checked;
-    const ok = actualizarRegistroDeHoy(slug, { hecho: deseado }, aviso);
-    const hechoReal = ok ? deseado : !!registroDeHoy(slug).hecho;
+    const ok = actualizarRegistroDeHoy(slot, slug, { hecho: deseado }, aviso);
+    const hechoReal = ok ? deseado : !!registroDeHoy(slot, slug).hecho;
     input.checked = hechoReal;
     contenedor.classList.toggle("done", hechoReal);
   });

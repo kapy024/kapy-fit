@@ -1,8 +1,18 @@
-// The only module that touches localStorage. Records are keyed by exercise
-// slug, never by position in a day, so reorganizing the split never orphans
-// history. The legacy "hierro:" prefix is left untouched for the importer.
-export const LLAVE_REGISTROS = "hierro2:registros";
-export const LLAVE_PREFS = "hierro2:prefs";
+// The only module that touches localStorage — migracion.js reads the legacy
+// keys through llavesLegadas() below instead of reaching for localStorage
+// itself.
+//
+// Records are keyed by SLOT ("<dia>:<bloque>:<slug>", see rutina.js), so two
+// sets of the same exercise in one session are two independent records
+// instead of one that overwrites itself. Every record also carries its
+// `slug`, which is what historial(slug) follows across slots: that is how a
+// squat's history survives being moved to another day or variant.
+//
+// The prefix is bumped to "hierro3:" because the shape of the record store
+// changed (slug-keyed → slot-keyed). Neither "hierro:" (the monolith) nor
+// "hierro2:" (the intermediate version) is ever deleted.
+export const LLAVE_REGISTROS = "hierro3:registros";
+export const LLAVE_PREFS = "hierro3:prefs";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -54,32 +64,66 @@ export function hoyISO() {
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
 
-// Returns every record for `slug`, ascending by date.
-export function historial(slug) {
+// Returns every record of one routine row (`slot`), ascending by date.
+export function historialDeSlot(slot) {
   const todo = leerJSON(LLAVE_REGISTROS, {});
-  const lista = Array.isArray(todo[slug]) ? todo[slug] : [];
+  const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   return [...lista].sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
-// Returns the record for `slug` on `fecha`, or null if there is none.
-export function registroDe(slug, fecha) {
-  return historial(slug).find((r) => r.fecha === fecha) ?? null;
+// Returns every record of `slug` across ALL slots, ascending by date. This
+// is the exercise-level view — the one the future charts consume: the same
+// exercise logged on day 3 and on day 6, or in two different variants, is
+// one history. Rows written before slugs were stored (there should be none,
+// the prefix was bumped) simply don't match and are skipped.
+export function historial(slug) {
+  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const juntos = [];
+  for (const slot of Object.keys(todo)) {
+    const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
+    for (const r of lista) {
+      if (r && r.slug === slug) juntos.push(r);
+    }
+  }
+  return juntos.sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
-// Replaces the record for `registro.fecha` under `slug` entirely (no
+// Returns the record of `slot` on `fecha`, or null if there is none.
+export function registroDe(slot, fecha) {
+  return historialDeSlot(slot).find((r) => r.fecha === fecha) ?? null;
+}
+
+// Replaces the record for `registro.fecha` under `slot` entirely (no
 // merge with the previous record — the whole point of overwriting is that
 // stale fields from a prior save don't survive), or appends it if that
-// date has no record yet. Returns true if the write persisted, false if
-// storage refused it (quota full or private mode); the caller decides how
-// to tell the user, this function never throws for that case.
-export function guardarRegistro(slug, registro) {
+// date has no record yet. `registro` is expected to carry its `slug`, so
+// historial(slug) can find it later. Returns true if the write persisted,
+// false if storage refused it (quota full or private mode); the caller
+// decides how to tell the user, this function never throws for that case.
+export function guardarRegistro(slot, registro) {
   const todo = leerJSON(LLAVE_REGISTROS, {});
-  const lista = Array.isArray(todo[slug]) ? todo[slug] : [];
+  const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   const i = lista.findIndex((r) => r.fecha === registro.fecha);
   if (i >= 0) lista[i] = registro;
   else lista.push(registro);
-  todo[slug] = lista;
+  todo[slot] = lista;
   return escribirJSON(LLAVE_REGISTROS, todo);
+}
+
+// Returns every localStorage key matching `patron` with its raw string
+// value, as [{ llave, crudo }]. The importer's only window onto storage:
+// parsing and interpreting those rows stays migracion.js's business, but
+// the localStorage access itself lives here, like every other read in the
+// app. An unreadable storage (private mode) yields an empty list rather
+// than throwing — there is simply nothing to import in that case.
+export function llavesLegadas(patron) {
+  try {
+    return Object.keys(localStorage)
+      .filter((k) => patron.test(k))
+      .map((llave) => ({ llave, crudo: localStorage.getItem(llave) }));
+  } catch (_) {
+    return [];
+  }
 }
 
 // Returns the saved preferences, defaulting `unidad` to "kg" both when

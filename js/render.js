@@ -33,6 +33,20 @@ export function pintarNav(contenedor, diaActivo, alSeleccionar) {
   });
 }
 
+// Which block (variant) of each day is on screen, remembered for as long as
+// the page lives — same as the monolith's `state.variant`. Not persisted:
+// the variant you pick is a "what am I training right now" choice, not a
+// preference, and it resets with the page exactly as it always did.
+const bloqueActivo = {};
+
+// Returns the block key currently selected for `d`, defaulting to its first
+// block (and forgetting a stale key if the routine no longer has it).
+function claveBloqueActivo(d) {
+  const guardada = bloqueActivo[d.clave];
+  if (guardada && d.bloques.some((b) => b.clave === guardada)) return guardada;
+  return d.bloques[0].clave;
+}
+
 export function pintarDia(contenedor, claveDia, unidad) {
   // A running rest timer holds a setInterval closure over nodes that are
   // about to be detached by innerHTML = "" below — without this sweep,
@@ -41,7 +55,11 @@ export function pintarDia(contenedor, claveDia, unidad) {
   clearAllTimers();
   contenedor.innerHTML = "";
   const d = dia(claveDia);
-  contenedor.appendChild(pintarPanel(d, unidad));
+  // Redrawing the whole day is how a variant change takes effect: the same
+  // path a day-tab click takes, so there is only one render path to reason
+  // about (and the timer sweep above runs for free).
+  const repintar = () => pintarDia(contenedor, claveDia, unidad);
+  contenedor.appendChild(pintarPanel(d, unidad, repintar));
 }
 
 function pintarPestana(d, diaActivo, alSeleccionar) {
@@ -65,7 +83,11 @@ function pintarPestana(d, diaActivo, alSeleccionar) {
   return btn;
 }
 
-function pintarPanel(d, unidad) {
+// Draws one day. A day with several blocks shows a pill row and ONLY the
+// selected block — drawing them all at once (as an earlier version did) puts
+// three rows of the same exercise on screen at the same time, which is what
+// makes a session unreadable and what the variant selector exists to avoid.
+function pintarPanel(d, unidad, repintar) {
   const section = document.createElement("section");
   section.className = "panel active";
 
@@ -81,11 +103,38 @@ function pintarPanel(d, unidad) {
     return section;
   }
 
-  const fecha = hoyISO();
-  d.bloques.forEach((bloque) => {
-    section.appendChild(pintarBloque(d, bloque, unidad, fecha));
-  });
+  const clave = claveBloqueActivo(d);
+  if (d.bloques.length > 1) {
+    section.appendChild(pintarSelectorBloques(d, clave, repintar));
+  }
+  const activo = d.bloques.find((b) => b.clave === clave);
+  // With pills on screen the block's own heading would just repeat the
+  // selected pill's text, so it is only drawn when there is no selector.
+  section.appendChild(pintarBloque(d, activo, unidad, hoyISO(), d.bloques.length === 1));
   return section;
+}
+
+// The variant pills. Reuses .variant-row/.chip-btn from estilos.css, which
+// have been there since the monolith.
+function pintarSelectorBloques(d, claveActiva, repintar) {
+  const fila = document.createElement("div");
+  fila.className = "variant-row";
+  fila.setAttribute("role", "tablist");
+  fila.setAttribute("aria-label", `Variantes de ${d.etiqueta}`);
+  d.bloques.forEach((b) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip-btn";
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", b.clave === claveActiva ? "true" : "false");
+    btn.textContent = b.etiqueta;
+    btn.addEventListener("click", () => {
+      bloqueActivo[d.clave] = b.clave;
+      repintar();
+    });
+    fila.appendChild(btn);
+  });
+  return fila;
 }
 
 function pintarDescanso() {
@@ -98,9 +147,9 @@ function pintarDescanso() {
   return div;
 }
 
-function pintarBloque(d, bloque, unidad, fecha) {
+function pintarBloque(d, bloque, unidad, fecha, conTitulo) {
   const frag = document.createDocumentFragment();
-  if (bloque.etiqueta) {
+  if (conTitulo && bloque.etiqueta) {
     const h3 = document.createElement("h3");
     h3.textContent = bloque.etiqueta;
     frag.appendChild(h3);
@@ -128,7 +177,7 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   // La palomita va primero: pinta sobre `li` mismo para poder alternar la
   // clase "done" (tachado del nombre, ver estilos.css) sin pedirle a
   // registro.js que conozca la estructura del panel.
-  montarPalomita(li, ejercicioRutina.slug);
+  montarPalomita(li, ejercicioRutina);
 
   // Always drawn, even with no numeric duration ("Sin descanso") — the
   // widget itself decides button vs. static box; see montarTemporizador.
@@ -140,7 +189,7 @@ function pintarEjercicio(ejercicioRutina, unidad) {
   body.className = "ex-body";
   body.appendChild(pintarInfoEjercicio(ejercicioRutina, cat, unidad));
   montarImagen(body, ejercicioRutina.slug, cat);
-  montarCampos(body, ejercicioRutina.slug, ejercicioRutina, unidad);
+  montarCampos(body, ejercicioRutina, unidad);
   li.appendChild(body);
 
   // Sin video verificado (p.ej. aduccion-cadera): no se dibuja el botón.

@@ -170,10 +170,66 @@ export const RUTINA = [
   }
 ];
 
+// Stamps every exercise with its `slot`: the identity of one concrete row of
+// one session, "<dayKey>:<blockKey>:<slug>", plus an occurrence suffix
+// ("#2", "#3") when the same slug appears more than once inside the same
+// block (dia1/v1 does two press militar sets, dia5/v1 two remo en máquina).
+// Derived here, deterministically, at module load — never hand-written, so
+// it can't drift from the routine it describes. It is NOT positional: adding
+// an exercise above another one leaves the other one's slot untouched, so
+// its history survives. Runs once; RUTINA is the single source of slots.
+function asignarSlots(rutina) {
+  for (const d of rutina) {
+    for (const b of d.bloques) {
+      const ocurrencias = new Map();
+      for (const e of b.ejercicios) {
+        const n = (ocurrencias.get(e.slug) ?? 0) + 1;
+        ocurrencias.set(e.slug, n);
+        e.slot = `${d.clave}:${b.clave}:${e.slug}` + (n > 1 ? `#${n}` : "");
+      }
+    }
+  }
+}
+asignarSlots(RUTINA);
+
 export function dia(clave) {
   const d = RUTINA.find((x) => x.clave === clave);
   if (!d) throw new Error(`Día desconocido: ${clave}`);
   return d;
+}
+
+// Returns the block `claveBloque` of day `claveDia`, or null when either
+// key is unknown. Unlike dia(), this never throws: the importer asks about
+// day/block combinations that may legitimately no longer exist, and a
+// missing one is an orphan to report, not a crash.
+export function bloque(claveDia, claveBloque) {
+  const d = RUTINA.find((x) => x.clave === claveDia);
+  if (!d) return null;
+  return d.bloques.find((b) => b.clave === claveBloque) ?? null;
+}
+
+// Returns the exercise carrying `slot`, or null if no row has it.
+export function ejercicioPorSlot(slot) {
+  for (const d of RUTINA) {
+    for (const b of d.bloques) {
+      for (const e of b.ejercicios) {
+        if (e.slot === slot) return e;
+      }
+    }
+  }
+  return null;
+}
+
+// Every slot in the routine, in reading order. Duplicates here would mean
+// two rows sharing one record — rutina.test.js guards against exactly that.
+export function todosLosSlots() {
+  const lista = [];
+  for (const d of RUTINA) {
+    for (const b of d.bloques) {
+      for (const e of b.ejercicios) lista.push(e.slot);
+    }
+  }
+  return lista;
 }
 
 export function todosLosSlugs() {

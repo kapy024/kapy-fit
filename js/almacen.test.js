@@ -1,53 +1,99 @@
+// El almacén se indexa por SLOT (el renglón concreto de la rutina) y cada
+// registro guarda además su slug: por eso hay dos vistas, historialDeSlot()
+// para un renglón e historial() para el ejercicio a lo largo de toda la
+// rutina. Las pruebas de esta sección estaban escritas contra la forma
+// anterior (una llave por slug) y se adaptaron a la nueva.
 import { test, assertEq } from "./pruebas.js";
 import {
-  guardarRegistro, historial, registroDe,
-  preferencias, guardarPreferencias, LLAVE_REGISTROS, LLAVE_PREFS
+  guardarRegistro, historial, historialDeSlot, registroDe,
+  preferencias, guardarPreferencias, llavesLegadas,
+  LLAVE_REGISTROS, LLAVE_PREFS
 } from "./almacen.js";
 import { aKg } from "./unidades.js";
+
+const SLOT = "dia3:base:sentadilla";
 
 function limpiar() {
   localStorage.removeItem(LLAVE_REGISTROS);
   localStorage.removeItem(LLAVE_PREFS);
 }
 
+function reg(fecha, slug, extra) {
+  return { fecha, slug, pesoKg: null, series: null, reps: null, hecho: true, ...extra };
+}
+
 test("historial vacío devuelve arreglo vacío", () => {
   limpiar();
   assertEq(historial("sentadilla"), []);
+  assertEq(historialDeSlot(SLOT), []);
 });
 
 test("guardar y leer un registro", () => {
   limpiar();
-  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true });
-  assertEq(historial("sentadilla").length, 1);
-  assertEq(registroDe("sentadilla", "2026-09-02").pesoKg, 20);
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20, series: 4, reps: "10" }));
+  assertEq(historialDeSlot(SLOT).length, 1);
+  assertEq(registroDe(SLOT, "2026-09-02").pesoKg, 20);
 });
 
 test("guardar dos veces la misma fecha sobrescribe, no duplica", () => {
   limpiar();
-  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true });
-  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 22, series: 4, reps: "10", hecho: true });
-  assertEq(historial("sentadilla").length, 1);
-  assertEq(registroDe("sentadilla", "2026-09-02").pesoKg, 22);
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 }));
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 22 }));
+  assertEq(historialDeSlot(SLOT).length, 1);
+  assertEq(registroDe(SLOT, "2026-09-02").pesoKg, 22);
 });
 
 test("el historial sale ordenado por fecha aunque se guarde al revés", () => {
   limpiar();
-  guardarRegistro("crunch", { fecha: "2026-09-05", pesoKg: 40, series: 4, reps: "10", hecho: true });
-  guardarRegistro("crunch", { fecha: "2026-09-01", pesoKg: 35, series: 4, reps: "10", hecho: true });
-  assertEq(historial("crunch").map((r) => r.fecha), ["2026-09-01", "2026-09-05"]);
+  const slot = "dia2:base:crunch";
+  guardarRegistro(slot, reg("2026-09-05", "crunch", { pesoKg: 40 }));
+  guardarRegistro(slot, reg("2026-09-01", "crunch", { pesoKg: 35 }));
+  assertEq(historialDeSlot(slot).map((r) => r.fecha), ["2026-09-01", "2026-09-05"]);
 });
 
 test("los ejercicios no se pisan entre sí", () => {
   limpiar();
-  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true });
-  guardarRegistro("plancha", { fecha: "2026-09-02", pesoKg: null, series: 3, reps: "40 seg", hecho: true });
-  assertEq(historial("sentadilla").length, 1);
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 }));
+  guardarRegistro("dia6:v1:plancha", reg("2026-09-02", "plancha", { series: 3, reps: "40 seg" }));
+  assertEq(historialDeSlot(SLOT).length, 1);
+  assertEq(historialDeSlot("dia6:v1:plancha").length, 1);
+});
+
+// El bug que motivó todo esto: dos series del mismo ejercicio en el mismo
+// bloque compartían registro y la segunda borraba a la primera.
+test("dos renglones del mismo slug en un bloque no se pisan", () => {
+  limpiar();
+  const ligero = "dia1:v1:press-militar-barra";
+  const pesado = "dia1:v1:press-militar-barra#2";
+  guardarRegistro(ligero, reg("2026-09-02", "press-militar-barra", { pesoKg: 30 }));
+  guardarRegistro(pesado, reg("2026-09-02", "press-militar-barra", { pesoKg: 12 }));
+  assertEq(registroDe(ligero, "2026-09-02").pesoKg, 30);
+  assertEq(registroDe(pesado, "2026-09-02").pesoKg, 12);
+});
+
+test("historial(slug) junta los registros de todos los slots de ese ejercicio", () => {
+  limpiar();
+  guardarRegistro("dia3:base:abduccion-cadera", reg("2026-09-03", "abduccion-cadera", { pesoKg: 40 }));
+  guardarRegistro("dia6:v1:abduccion-cadera", reg("2026-09-01", "abduccion-cadera", { pesoKg: 45 }));
+  guardarRegistro("dia6:v2:abduccion-cadera", reg("2026-09-02", "abduccion-cadera", { pesoKg: 50 }));
+  guardarRegistro("dia6:v1:plancha", reg("2026-09-02", "plancha", {}));
+  const h = historial("abduccion-cadera");
+  assertEq(h.map((r) => r.fecha), ["2026-09-01", "2026-09-02", "2026-09-03"]);
+  assertEq(h.map((r) => r.pesoKg), [45, 50, 40]);
+});
+
+test("historial(slug) ignora los registros de otros ejercicios", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 }));
+  guardarRegistro("dia6:v1:plancha", reg("2026-09-02", "plancha", {}));
   assertEq(historial("plancha").length, 1);
+  assertEq(historial("sentadilla").length, 1);
+  assertEq(historial("crunch"), []);
 });
 
 test("registroDe devuelve null cuando no hay nada esa fecha", () => {
   limpiar();
-  assertEq(registroDe("sentadilla", "2026-01-01"), null);
+  assertEq(registroDe(SLOT, "2026-01-01"), null);
 });
 
 test("la unidad por omisión es kg", () => {
@@ -64,12 +110,13 @@ test("la preferencia de unidad se persiste", () => {
 test("un JSON corrupto no tumba la app", () => {
   localStorage.setItem(LLAVE_REGISTROS, "{esto no es json");
   assertEq(historial("sentadilla"), []);
+  assertEq(historialDeSlot(SLOT), []);
   limpiar();
 });
 
 test("guardarRegistro devuelve true cuando persiste", () => {
   limpiar();
-  assertEq(guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true }), true);
+  assertEq(guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 })), true);
 });
 
 test("guardarRegistro devuelve false cuando el almacenamiento falla", () => {
@@ -79,7 +126,7 @@ test("guardarRegistro devuelve false cuando el almacenamiento falla", () => {
     throw new DOMException("cuota llena", "QuotaExceededError");
   };
   try {
-    assertEq(guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true }), false);
+    assertEq(guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 })), false);
   } finally {
     localStorage.setItem = original;
   }
@@ -94,17 +141,34 @@ test("preferencias() cae a kg ante una unidad guardada inválida", () => {
 
 test("guardarRegistro reemplaza el registro por completo, no hace merge", () => {
   limpiar();
-  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 20, series: 4, reps: "10", hecho: true });
-  guardarRegistro("sentadilla", { fecha: "2026-09-02", pesoKg: 22, series: 3, reps: "8", hecho: false });
-  assertEq(registroDe("sentadilla", "2026-09-02"), { fecha: "2026-09-02", pesoKg: 22, series: 3, reps: "8", hecho: false });
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20, series: 4, reps: "10", hecho: true }));
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 22, series: 3, reps: "8", hecho: false }));
+  assertEq(registroDe(SLOT, "2026-09-02"), {
+    fecha: "2026-09-02", slug: "sentadilla", pesoKg: 22, series: 3, reps: "8", hecho: false
+  });
 });
 
 test("un peso capturado en libras se guarda en kilos", () => {
   limpiar();
   const capturado = 100;                       // el usuario escribió 100
-  guardarRegistro("sentadilla", {
-    fecha: "2026-09-02", pesoKg: aKg(capturado, "lb"),
-    series: 4, reps: "10", hecho: true
-  });
-  assertEq(registroDe("sentadilla", "2026-09-02").pesoKg, 45.4);
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: aKg(capturado, "lb") }));
+  assertEq(registroDe(SLOT, "2026-09-02").pesoKg, 45.4);
+});
+
+// --- llaves legadas: la única ventana del importador al localStorage ---
+
+test("llavesLegadas devuelve llave y contenido crudo, sin interpretarlos", () => {
+  const llave = "hierro:h:core:_:0";
+  localStorage.setItem(llave, "[]");
+  const encontradas = llavesLegadas(/^hierro:h:([^:]+):([^:]+):(\d+)$/);
+  const mia = encontradas.find((x) => x.llave === llave);
+  assertEq(mia.crudo, "[]");
+  localStorage.removeItem(llave);
+});
+
+test("llavesLegadas no devuelve las llaves nuevas", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 }));
+  assertEq(llavesLegadas(/^hierro:h:([^:]+):([^:]+):(\d+)$/).some((x) => x.llave === LLAVE_REGISTROS), false);
+  limpiar();
 });

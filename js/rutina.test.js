@@ -1,5 +1,7 @@
 import { test, assertEq, assertThrows } from "./pruebas.js";
-import { RUTINA, dia, todosLosSlugs } from "./rutina.js";
+import {
+  RUTINA, dia, bloque, todosLosSlugs, todosLosSlots, ejercicioPorSlot
+} from "./rutina.js";
 import { CATALOGO } from "./catalogo.js";
 
 const SLUGS_ABDOMEN = ["crunch", "plancha", "plancha-lateral"];
@@ -90,4 +92,54 @@ test("pesoKg es número o null, nunca cadena", () => {
 
 test("un día inexistente lanza error", () => {
   assertThrows(() => dia("dia99"));
+});
+
+// --- slots: la identidad de cada renglón de la rutina ---
+
+test("los slots no se repiten en toda la rutina", () => {
+  const slots = todosLosSlots();
+  assertEq(slots.length, new Set(slots).size, "hay dos renglones con el mismo slot");
+});
+
+test("todo ejercicio de la rutina trae su slot", () => {
+  for (const d of RUTINA) {
+    for (const b of d.bloques) {
+      for (const e of b.ejercicios) {
+        if (typeof e.slot !== "string" || !e.slot) {
+          throw new Error(`${d.clave}/${b.clave}/${e.slug} sin slot`);
+        }
+      }
+    }
+  }
+});
+
+test("el slot se arma con día, bloque y slug", () => {
+  assertEq(dia("dia6").bloques[0].ejercicios[6].slot, "dia6:v1:abduccion-cadera");
+});
+
+test("un slug repetido dentro del bloque recibe sufijo de ocurrencia", () => {
+  const ejs = bloque("dia1", "v1").ejercicios.filter((e) => e.slug === "press-militar-barra");
+  assertEq(ejs.map((e) => e.slot), [
+    "dia1:v1:press-militar-barra", "dia1:v1:press-militar-barra#2"
+  ]);
+  const remos = bloque("dia5", "v1").ejercicios.filter((e) => e.slug === "remo-maquina");
+  assertEq(remos.map((e) => e.slot), [
+    "dia5:v1:remo-maquina", "dia5:v1:remo-maquina#2"
+  ]);
+});
+
+test("el mismo slug en dos bloques distintos son slots distintos", () => {
+  const a = bloque("dia6", "v1").ejercicios.find((e) => e.slug === "abduccion-cadera");
+  const b = bloque("dia6", "v2").ejercicios.find((e) => e.slug === "abduccion-cadera");
+  assertEq(a.slot !== b.slot, true);
+});
+
+test("ejercicioPorSlot encuentra el renglón y devuelve null si no existe", () => {
+  assertEq(ejercicioPorSlot("dia1:v1:press-militar-barra#2").slug, "press-militar-barra");
+  assertEq(ejercicioPorSlot("dia1:v1:no-existe"), null);
+});
+
+test("bloque() devuelve null en vez de lanzar ante claves desconocidas", () => {
+  assertEq(bloque("dia99", "v1"), null);
+  assertEq(bloque("dia1", "v9"), null);
 });
