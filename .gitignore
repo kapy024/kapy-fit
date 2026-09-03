@@ -3,3 +3,4 @@
 # junto con las políticas RLS que la hacen segura.
 config.local.js
 .superpowers/
+.claude/
