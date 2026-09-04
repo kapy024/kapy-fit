@@ -3,6 +3,7 @@
 // Lista de routine_days (Task 10) vía Menu2. `dias` ya viene resuelto —
 // esta vista solo presenta y captura la selección, nunca hace su propio
 // fetch (spec §2: una sola fuente de verdad, leída por RoutineClient).
+using Toybox.Lang;
 using Toybox.WatchUi;
 
 class DaySelectView extends WatchUi.Menu2 {
@@ -50,7 +51,7 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onSelect(item) {
-        var dia = item.getId();
+        var dia = item.getId() as Lang.Dictionary;
         Toybox.Application.Storage.setValue("ultimo_dia_clave", dia.get("clave"));
         RoutineClient.fetchBlocks(_jwt, dia.get("id"), method(:onBloques));
     }

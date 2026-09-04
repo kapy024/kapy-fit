@@ -2,6 +2,7 @@
 //
 // Solo se llega aquí cuando el día tiene MÁS de un bloque — DaySelectDelegate
 // (Task 12) salta directo a la captura si hay uno solo (spec §4).
+using Toybox.Lang;
 using Toybox.WatchUi;
 
 class BlockSelectView extends WatchUi.Menu2 {
@@ -24,7 +25,7 @@ class BlockSelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onSelect(item) {
-        var bloque = item.getId();
+        var bloque = item.getId() as Lang.Dictionary;
         RoutineClient.fetchExercises(_jwt, bloque.get("id"), method(:onEjercicios));
     }
 
