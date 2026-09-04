@@ -14,6 +14,9 @@ import {
   contarCompletados, reiniciarCompletadosDeHoy
 } from "./registro.js";
 import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
+import {
+  modoEdicionActivo, pintarBotonModoEdicion, pintarFilaEdicion
+} from "./editor-rutina.js";
 
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
@@ -124,12 +127,18 @@ function pintarPanel(d, unidad, repintar, alReiniciar) {
   const h2 = document.createElement("h2");
   h2.textContent = `${d.etiqueta}: ${d.enfoque}`;
   head.appendChild(h2);
-  section.appendChild(head);
 
   if (d.bloques.length === 0) {
+    section.appendChild(head);
     section.appendChild(pintarDescanso());
     return section;
   }
+
+  // The edit-mode toggle: never on the rest day (nothing there to edit),
+  // and drawn once per day panel — not per exercise — so switching it on
+  // never fills the training screen with controls, per the brief.
+  head.appendChild(pintarBotonModoEdicion(repintar));
+  section.appendChild(head);
 
   const clave = claveBloqueActivo(d);
   if (d.bloques.length > 1) {
@@ -139,7 +148,7 @@ function pintarPanel(d, unidad, repintar, alReiniciar) {
   // With pills on screen the block's own heading would just repeat the
   // selected pill's text, so it is only drawn when there is no selector.
   section.appendChild(
-    pintarBloque(d, activo, unidad, hoyISO(), d.bloques.length === 1, alReiniciar)
+    pintarBloque(d, activo, unidad, hoyISO(), d.bloques.length === 1, alReiniciar, repintar)
   );
   return section;
 }
@@ -177,7 +186,7 @@ function pintarDescanso() {
   return div;
 }
 
-function pintarBloque(d, bloque, unidad, fecha, conTitulo, alReiniciar) {
+function pintarBloque(d, bloque, unidad, fecha, conTitulo, alReiniciar, repintar) {
   const frag = document.createDocumentFragment();
   if (conTitulo && bloque.etiqueta) {
     const h3 = document.createElement("h3");
@@ -185,9 +194,15 @@ function pintarBloque(d, bloque, unidad, fecha, conTitulo, alReiniciar) {
     frag.appendChild(h3);
   }
   const progreso = pintarProgreso(bloque.ejercicios);
-  const lista = pintarListaEjercicios(bloque.ejercicios, unidad, progreso.actualizar);
+  const lista = pintarListaEjercicios(d, bloque, unidad, progreso.actualizar, repintar);
   frag.appendChild(lista);
-  frag.appendChild(pintarAcciones(d, bloque, unidad, fecha, progreso, lista, alReiniciar));
+  // The training controls (progress counter, "Reiniciar", calendar links)
+  // belong to the training screen, not the editing one — see editor-rutina.js's
+  // pintarFilaEdicion, which replaces the whole row with editing controls
+  // instead of layering on top of it.
+  if (!modoEdicionActivo()) {
+    frag.appendChild(pintarAcciones(d, bloque, unidad, fecha, progreso, lista, alReiniciar));
+  }
 
   const wrap = document.createElement("div");
   wrap.appendChild(frag);
@@ -209,10 +224,17 @@ function pintarProgreso(ejercicios) {
   return { span, actualizar };
 }
 
-function pintarListaEjercicios(ejercicios, unidad, alCambiarProgreso) {
+function pintarListaEjercicios(d, bloque, unidad, alCambiarProgreso, repintar) {
   const ul = document.createElement("ul");
   ul.className = "exlist";
-  ejercicios.forEach((e) => ul.appendChild(pintarEjercicio(e, unidad, alCambiarProgreso)));
+  if (modoEdicionActivo()) {
+    const total = bloque.ejercicios.length;
+    bloque.ejercicios.forEach((e, i) => {
+      ul.appendChild(pintarFilaEdicion(d.clave, bloque.clave, e, i, total, unidad, repintar));
+    });
+  } else {
+    bloque.ejercicios.forEach((e) => ul.appendChild(pintarEjercicio(e, unidad, alCambiarProgreso)));
+  }
   return ul;
 }
 
