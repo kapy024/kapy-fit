@@ -150,3 +150,11 @@ import("./sesion-ui.js")
   .catch(() => {
     sesionSlot.textContent = "Sin conexión — se guarda en este dispositivo.";
   });
+
+// Same dynamic-import safety as sesion-ui.js above: sync.js's own chain
+// reaches the Supabase CDN too (through db.js's cliente()), and losing
+// that must never take anything down here — it only means the pending
+// queue waits for the next successful attempt, exactly as designed.
+import("./sync.js")
+  .then(({ arrancarAutosync }) => arrancarAutosync())
+  .catch(() => {});

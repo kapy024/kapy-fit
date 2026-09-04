@@ -3,6 +3,12 @@
 // works from localStorage with no session at all (see almacen.js).
 import { sesionActual, enviarEnlace, cerrarSesion, alCambiarSesion, correoValido } from "./auth.js";
 import { hayConfig, libreriaDisponible } from "./db.js";
+// alCambiarEstado() is local-only (see sync.js) — it never touches the
+// network itself, so wiring it in directly here (instead of through the
+// deps seam below) can't break sesion-ui.test.js's doubles, which don't
+// know about sync at all.
+import { alCambiarEstado } from "./sync.js";
+import { pendientes } from "./almacen.js";
 
 // The real collaborators, used whenever a caller doesn't override them.
 // sesion-ui.test.js passes fakes here instead, to drive sesionActual() and
@@ -11,6 +17,47 @@ import { hayConfig, libreriaDisponible } from "./db.js";
 const DEPENDENCIAS_REALES = { sesionActual, enviarEnlace, cerrarSesion, alCambiarSesion, correoValido, libreriaDisponible };
 
 let contadorInstancias = 0;
+
+// Text for each sync.js state. "sin-sesion" renders nothing — there's
+// nothing to sync without a session, and this widget already has its own
+// note for that case. Every other state stays a few words, no punctuation
+// that reads as alarming: a failed send is framed as "it'll upload on its
+// own", never "Error", because the data is safe on the device regardless.
+function textoDeEstadoSync(valor) {
+  if (valor === "al-dia") return "Todo sincronizado";
+  if (valor === "sincronizando") return "Sincronizando…";
+  if (valor === "error") return "Sin conexión — se subirá solo";
+  if (valor === "pendiente") {
+    const n = pendientes().length;
+    return `${n} ${n === 1 ? "cambio" : "cambios"} por subir`;
+  }
+  return "";
+}
+
+// A discreet, always-present status note — never inside `bloque` (which
+// pintar() below wipes on every session-state change), so it survives
+// login/logout repaints untouched. role="status" + aria-live, same as the
+// rest of this widget's transient messages, but never a modal: this is
+// read mid-set, not something that should ever demand a tap.
+function montarIndicadorSync(contenedor) {
+  const indicador = document.createElement("span");
+  indicador.className = "sync-indicador";
+  // Inline, not a stylesheet rule: this widget's CSS file is out of scope
+  // for this change, and matching .sesion-msg's own look (same variables)
+  // is enough to keep it from standing out or looking unstyled.
+  indicador.style.display = "block";
+  indicador.style.fontSize = "12.5px";
+  indicador.style.color = "var(--text-dim)";
+  indicador.setAttribute("role", "status");
+  indicador.setAttribute("aria-live", "polite");
+  contenedor.appendChild(indicador);
+
+  alCambiarEstado((valor) => {
+    const texto = textoDeEstadoSync(valor);
+    indicador.textContent = texto;
+    indicador.hidden = texto === "";
+  });
+}
 
 // Mounts the widget into `contenedor` (an empty element already in the
 // page). With no Supabase config there is nothing to sign into, so it
@@ -23,6 +70,8 @@ export function montarSesion(contenedor, deps = DEPENDENCIAS_REALES) {
   if (!hayConfig()) return;
   if (contenedor.dataset.sesionMontada === "1") return;
   contenedor.dataset.sesionMontada = "1";
+
+  montarIndicadorSync(contenedor);
 
   const {
     sesionActual: leerSesion, enviarEnlace: mandarEnlace, cerrarSesion: salir,
