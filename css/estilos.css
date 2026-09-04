@@ -546,6 +546,18 @@
     color:var(--text-dim);
     font-weight:500;
   }
+  /* --- mini-línea de tendencia (tarea 7): vacía y sin ancho cuando no hay
+     nada que dibujar, para no dejar hueco junto a "Historial (0)". --- */
+  .mini-wrap{display:inline-flex; align-items:center}
+  .minilinea{display:block}
+  .minilinea polyline{
+    fill:none;
+    stroke:var(--viz-1);
+    stroke-width:2;
+    stroke-linecap:round;
+    stroke-linejoin:round;
+    vector-effect:non-scaling-stroke;
+  }
   .hist-panel{
     margin-top:9px;
     padding:9px 11px;

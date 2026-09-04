@@ -7,6 +7,7 @@
 import { guardarRegistro, registroDe, historial, hoyISO, guardarUltimoReinicio } from "./almacen.js";
 import { aKg, desdeKg, aNumeroONull, formatear } from "./unidades.js";
 import { etiquetaSlot } from "./rutina.js";
+import { montarMinilinea } from "./minilinea.js";
 
 // --- lectura/escritura del registro de hoy ---
 
@@ -422,7 +423,12 @@ export function montarHistorial(contenedor, ejercicioRutina, unidad) {
   toggle.className = "hist-toggle";
   const contador = document.createElement("span");
   contador.className = "hc";
-  toggle.append("Historial ", contador);
+  // Holds the trend sparkline (js/minilinea.js) right in the toggle line —
+  // empty and zero-width whenever there's nothing to draw yet, so a fresh
+  // exercise's "Historial (0)" never shows a gap where a line would go.
+  const miniWrap = document.createElement("span");
+  miniWrap.className = "mini-wrap";
+  toggle.append("Historial ", contador, miniWrap);
 
   const panel = document.createElement("div");
   panel.className = "hist-panel";
@@ -461,10 +467,13 @@ export function montarHistorial(contenedor, ejercicioRutina, unidad) {
     if (!panel.hidden) dibujarPanel();
   });
 
-  // Keep the count honest while the row is on screen, and refresh an
-  // already-open panel when this exercise gets logged from another row.
+  // Keep the count (and the sparkline next to it) honest while the row is
+  // on screen, and refresh an already-open panel when this exercise gets
+  // logged from another row.
   function refrescarContador() {
     contador.textContent = `(${historial(slug).length})`;
+    miniWrap.innerHTML = "";
+    montarMinilinea(miniWrap, slug, unidad);
     if (!panel.hidden) dibujarPanel();
   }
   refrescarContador();
