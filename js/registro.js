@@ -7,6 +7,7 @@
 import { guardarRegistro, registroDe, historial, hoyISO, guardarUltimoReinicio } from "./almacen.js";
 import { aKg, desdeKg, aNumeroONull, formatear } from "./unidades.js";
 import { etiquetaSlot } from "./rutina.js";
+import { montarMinilinea } from "./minilinea.js";
 
 // --- lectura/escritura del registro de hoy ---
 
@@ -405,6 +406,44 @@ function formatearFechaCorta(fechaISO) {
   return `${dia}/${mes}`;
 }
 
+// --- refresco delegado del historial tras un guardado (I5, revisión final) ---
+
+// Every montarHistorial() row's own refresh callback, keyed by slug — ONE
+// delegated document listener (registered once, right below) walks this
+// set instead of every row adding its own document.addEventListener(
+// "registro-guardado", ...): a day panel repaint (variant change, day
+// switch, edit-mode toggle) rebuilds every row from scratch, and nothing
+// ever called removeEventListener on the old ones — after enough repaints,
+// a single save fired dozens of stale callbacks, each re-reading the whole
+// store on top of it (measured: 58 reads, 236 ms, after 54 renders of a
+// 4,000-row history — see I5, final-review brief). render.js's pintarDia()
+// clears this set on every repaint (limpiarEscuchasHistorial(), below), the
+// same point it already sweeps the timers/images/charts left behind by the
+// panel it's about to replace.
+const escuchasHistorial = new Set();
+
+document.addEventListener("registro-guardado", (e) => {
+  if (!e.detail) return;
+  for (const { slug, refrescar } of escuchasHistorial) {
+    if (slug === e.detail.slug) refrescar();
+  }
+});
+
+// Discards every row's refresh callback — called by render.js right before
+// it tears down the exercise list these rows belong to, so a stale
+// callback (closing over DOM nodes about to be detached) never outlives
+// the repaint that orphaned it.
+export function limpiarEscuchasHistorial() {
+  escuchasHistorial.clear();
+}
+
+// Test-only seam: how many row-refresh callbacks are currently tracked —
+// registro.test.js uses this to prove limpiarEscuchasHistorial() actually
+// empties the set (I5, final-review brief). Never used outside tests.
+export function _contarEscuchasHistorialParaPruebas() {
+  return escuchasHistorial.size;
+}
+
 // Draws the collapsible per-exercise history: a "Historial (N)" toggle and
 // a panel listing past sessions, most recent first. Reads historial(slug) —
 // which mixes every slot sharing this slug, since the same exercise can sit
@@ -415,14 +454,19 @@ function formatearFechaCorta(fechaISO) {
 // built lazily on first open, not at draw time, so a day with many
 // exercises doesn't pay to compute history nobody looks at.
 export function montarHistorial(contenedor, ejercicioRutina, unidad) {
-  const { slug } = ejercicioRutina;
+  const { slug, slot } = ejercicioRutina;
 
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "hist-toggle";
   const contador = document.createElement("span");
   contador.className = "hc";
-  toggle.append("Historial ", contador);
+  // Holds the trend sparkline (js/minilinea.js) right in the toggle line —
+  // empty and zero-width whenever there's nothing to draw yet, so a fresh
+  // exercise's "Historial (0)" never shows a gap where a line would go.
+  const miniWrap = document.createElement("span");
+  miniWrap.className = "mini-wrap";
+  toggle.append("Historial ", contador, miniWrap);
 
   const panel = document.createElement("div");
   panel.className = "hist-panel";
@@ -461,16 +505,22 @@ export function montarHistorial(contenedor, ejercicioRutina, unidad) {
     if (!panel.hidden) dibujarPanel();
   });
 
-  // Keep the count honest while the row is on screen, and refresh an
-  // already-open panel when this exercise gets logged from another row.
+  // Keep the count (and the sparkline next to it) honest while the row is
+  // on screen, and refresh an already-open panel when this exercise gets
+  // logged from another row.
   function refrescarContador() {
     contador.textContent = `(${historial(slug).length})`;
+    miniWrap.innerHTML = "";
+    // This row's own slot, never the slug — a slug shared by more than one
+    // slot (día 1's light/heavy press militar, día 5's repeated remo) would
+    // otherwise blend another slot's numbers into this row's sparkline and
+    // could silently reverse the trend it draws (see I2 in the
+    // final-review brief, and minilinea.js's own header comment).
+    montarMinilinea(miniWrap, slot, unidad);
     if (!panel.hidden) dibujarPanel();
   }
   refrescarContador();
-  document.addEventListener("registro-guardado", (e) => {
-    if (e.detail && e.detail.slug === slug) refrescarContador();
-  });
+  escuchasHistorial.add({ slug, refrescar: refrescarContador });
 
   contenedor.append(toggle, panel);
 }

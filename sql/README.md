@@ -345,3 +345,50 @@ orden, dos usuarios de prueba con una rutina de un renglón cada uno:
 - Sin sesión (`anon`): `permission denied for function
   subir_edicion_rutina` — el `EXECUTE` revocado lo bloquea antes de que la
   función llegue a correr.
+
+## 009_peso_corporal.sql
+
+Agregado el 2026-09-04, entrega 3 (gráficas): la pestaña Progreso agrega
+captura de peso corporal, y `body_weight` (creada desde `001_esquema.sql`,
+con su `editado_en` desde `006`) todavía no tenía ninguna función para
+escribirla — `sync.js` no tenía tipo de operación `"peso"` hasta esta
+entrega.
+
+Agrega `subir_peso_corporal(p_fecha, p_kg, p_editado_en)`: mismo patrón que
+`subir_registro_ejercicio` (`006`) — escritura condicional por
+`editado_en` (gana quien editó al último, no quien sincronizó al último),
+`security invoker` con `user_id` siempre de `auth.uid()` (nunca un
+parámetro), y devuelve siempre `{aplicado, fila}` para que `sync.js`
+corrija su copia local cuando pierde. A diferencia de `006` — que dejó el
+`EXECUTE` público sin revocar y necesitó dos migraciones de arreglo después
+(`007` para `clonar_plantilla`, y un commit aparte para
+`subir_registro_ejercicio` mismo) — **esta migración revoca el `EXECUTE`
+de `public`/`anon` desde el principio**, en el mismo archivo que crea la
+función.
+
+**Ya está aplicada en producción.** Confirmado por REST sin sesión: la
+llamada a `subir_peso_corporal` responde `42501` (`insufficient_privilege`)
+en vez de ejecutar — el `EXECUTE` revocado bloquea la llamada antes de que
+la función llegue a correr, igual que el resultado esperado de `008` para
+`subir_edicion_rutina`.
+
+Del lado del cliente (`js/sync.js`, `js/almacen.js`, `js/peso-corporal.js`):
+- `guardarPeso()` (`peso-corporal.js`) valida (rechaza no-numérico,
+  negativo o cero — `body_weight` tiene `check (weight_kg > 0)`, y dejar
+  pasar un cero encolaría una escritura que el servidor rechaza para
+  siempre) antes de llamar a `almacen.js`'s `guardarPeso()`, que persiste y
+  encola un pendiente `"peso"`.
+- `sync.js`'s `enviarOperacion()` sube ese pendiente por `rpc(...)` a
+  `subir_peso_corporal`, con la misma reconciliación por `editado_en` que
+  `"registro"`/`"rutina_bloque"` ya tienen.
+- `descargar()` ahora también trae `body_weight` propia (`descargarPesos()`),
+  con las mismas cuatro reglas que ya usan los registros de ejercicio —
+  incluida la regla 1 (un peso declinado en el aviso de adopción de
+  historial nunca se pisa con una descarga; ver el hallazgo C1 de la
+  revisión final de esta entrega, que cerró el hueco que dejaba pasar esto
+  quieto para el peso corporal).
+
+Aplica este archivo como los demás, en el editor SQL. Las comprobaciones
+(columna, `security invoker`, permisos, y el mismo par de escrituras
+condicionales que `006`/`008`) están comentadas al final del propio
+archivo.

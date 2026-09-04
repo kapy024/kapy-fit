@@ -10,7 +10,19 @@ en el gimnasio) y desde una computadora, y publicarse con GitHub Pages.
   selector de bloques.
 - Registro de peso, series y reps por ejercicio, con un historial desplegable
   por ejercicio ("Historial (N)") que junta las sesiones pasadas de ese
-  ejercicio sin importar en qué día o variante se registraron.
+  ejercicio sin importar en qué día o variante se registraron, más una
+  mini-línea de tendencia junto al contador ("Historial (N)", con su propia
+  flecha de subida/bajada) que habla solo del renglón que la muestra, nunca
+  de otro renglón que comparta el mismo ejercicio.
+- **Peso corporal**, capturado desde la pestaña **Progreso**: un campo de
+  texto ("Peso de esta semana") que se guarda en kilos igual que todo lo
+  demás, más una pestaña **Progreso** con su propia gráfica (línea de peso +
+  promedio móvil de 4 semanas, agrupado por semana ISO) y, por ejercicio, dos
+  gráficas apiladas (peso levantado / volumen de entrenamiento) sobre el
+  mismo eje de fechas. Con menos de 2 puntos no se dibuja gráfica, solo
+  cuántos faltan; sin Chart.js disponible (o sin red la primera vez), cada
+  gráfica cae a su tabla de datos equivalente, que es también su respaldo
+  para lectores de pantalla.
 - Selector de unidad **kg / lb**: la conversión es solo de presentación — lo
   guardado siempre está en kilos.
 - Contador de completados por sesión ("N / M completados") y un botón
@@ -29,7 +41,11 @@ en el gimnasio) y desde una computadora, y publicarse con GitHub Pages.
   Supabase). Sin sesión, la app funciona igual que siempre, completamente
   local. Con sesión, sincroniza entre dispositivos:
   - **Sí se sube**: los registros de ejercicio (peso/series/reps/hecho por
-    día), las ediciones a la rutina propia y la preferencia de unidad.
+    día), el peso corporal, las ediciones a la rutina propia y la
+    preferencia de unidad. Todo lo que se registró sin sesión pasa primero
+    por el mismo aviso de adopción ("Encontré N registros… ¿los subo?") antes
+    de subir nada — "Ahora no" también protege de que una descarga
+    posterior lo reemplace.
   - **Nunca sale del dispositivo**: el catálogo de ejercicios, las imágenes,
     el temporizador y cualquier otro dato de la interfaz — no hay tabla para
     eso en el servidor.
@@ -64,6 +80,14 @@ estilos; toda la lógica vive en módulos ES bajo `js/`, cargados desde
 | `sync.js` | Sincronización en segundo plano: drena la cola de `almacen.js` hacia Supabase con reintento, resuelve conflictos por fecha de edición (no por quién sincronizó al último) y baja el historial de la cuenta al iniciar sesión. |
 | `calendario.js` | Construye los enlaces de Google Calendar y el contenido `.ics`. |
 | `imagenes.js` | Anima las dos imágenes de demostración por ejercicio y detiene las que salen de pantalla. |
+| `peso-corporal.js` | Valida y persiste el peso corporal (vía `almacen.js`) — rechaza valores no numéricos, negativos o cero antes de que lleguen a `localStorage`. |
+| `metricas.js` | Cálculos puros para las gráficas: volumen, promedio móvil, series temporales y agrupado por semana ISO. Sin DOM, sin `localStorage`. |
+| `graficas.js` | Carga Chart.js con `import()` dinámico (nunca estático — una CDN caída no debe tumbar el resto de la app), la paleta validada (`--viz-1/2/3`) y el registro de instancias vivas que `destruirGrafica()`/`detenerTodasLasGraficas()` retiran antes de que `render.js` descarte su contenedor. |
+| `tabla-datos.js` | La tabla de datos equivalente a cada gráfica — su respaldo para lectores de pantalla y para cuando Chart.js no carga. |
+| `grafica-peso.js` | Gráfica de peso corporal (línea + promedio móvil de 4 semanas) con captura del peso de la semana y el selector "Último mes / Todo el histórico". |
+| `grafica-ejercicio.js` | Las dos gráficas apiladas (peso/volumen) de un ejercicio, agregando todos sus slots pero sin mezclarlos en una sola línea — una serie por slot cuando hay más de uno. |
+| `minilinea.js` | La mini-línea de tendencia junto al historial de una fila — habla solo del slot de esa fila, nunca de otro slot que comparta el mismo ejercicio. |
+| `progreso.js` | La pestaña Progreso: la tarjeta de peso corporal y la lista de ejercicios con historial, cada uno expandible a sus dos gráficas. Cargada con `import()` dinámico desde `render.js`, solo al abrir la pestaña. |
 | `migracion.js` | Traduce las llaves de `localStorage` de versiones anteriores al formato actual. |
 | `mapa-legado.js` | Tabla de datos que usa `migracion.js` para esa traducción. |
 | `pruebas.js` | Corredor de pruebas propio (sin dependencias): `test`, `assertEq`, etc. |

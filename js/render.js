@@ -11,9 +11,10 @@ import { formatear } from "./unidades.js";
 import {
   montarCampos, montarPalomita, montarTemporizador, montarHistorial,
   parseRestSeconds, clearAllTimers, crearAviso,
-  contarCompletados, reiniciarCompletadosDeHoy
+  contarCompletados, reiniciarCompletadosDeHoy, limpiarEscuchasHistorial
 } from "./registro.js";
 import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
+import { detenerTodasLasGraficas } from "./graficas.js";
 import {
   modoEdicionActivo, pintarBotonModoEdicion, pintarFilaEdicion
 } from "./editor-rutina.js";
@@ -26,6 +27,25 @@ function escaparHtml(s) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 }
+
+// Same value as progreso.js's own CLAVE_PROGRESO — declared again here
+// instead of imported so this file never pulls in progreso.js (and
+// therefore grafica-peso.js/grafica-ejercicio.js/Chart.js's loader chain)
+// just to know this one string. montarProgreso() itself is loaded with a
+// dynamic import() below, only when the tab is actually opened — a user
+// who never opens Progreso never pays for parsing those six modules on
+// every page load.
+const CLAVE_PROGRESO = "progreso";
+
+// The Progreso tab drawn as one more pill after día 7 — it carries no real
+// bloques (it isn't a training day), but a non-empty `bloques` keeps
+// pintarPestana from styling it as the dashed "descanso" pill below.
+const PESTANA_PROGRESO = {
+  clave: CLAVE_PROGRESO,
+  etiqueta: "Progreso",
+  enfoque: "Tu avance",
+  bloques: [{}]
+};
 
 // `diaActivo` is taken explicitly instead of read off module state, so a
 // caller that restores a saved day on startup (no click involved) still
@@ -40,6 +60,10 @@ export function pintarNav(contenedor, diaActivo, alSeleccionar) {
   RUTINA.forEach((d) => {
     contenedor.appendChild(pintarPestana(d, diaActivo, alSeleccionar));
   });
+  // Same pill/role=tab/aria-selected markup as every day, appended last —
+  // it inherits the click wiring and the focus restitution below for
+  // free, exactly like día 7 does.
+  contenedor.appendChild(pintarPestana(PESTANA_PROGRESO, diaActivo, alSeleccionar));
   if (teniaFoco) {
     const activa = contenedor.querySelector('[aria-selected="true"]');
     if (activa) activa.focus();
@@ -60,6 +84,37 @@ function claveBloqueActivo(d) {
   return d.bloques[0].clave;
 }
 
+// Draws whichever screen `claveActiva` names — the Progreso tab (its own
+// module, js/progreso.js — never a routine day, so it takes no
+// `alReiniciar`) or an actual training day (pintarDia, below, unchanged).
+// app.js calls this instead of pintarDia directly so switching TO Progreso
+// still sweeps a running rest timer / image observer left behind by the
+// day panel it replaces — the same cleanup pintarDia already does for a
+// day-to-day switch, see its own comment below.
+export function pintarPanelActivo(contenedor, claveActiva, unidad, alReiniciar) {
+  if (claveActiva === CLAVE_PROGRESO) {
+    clearAllTimers();
+    detenerTodasLasImagenes();
+    // Re-entering Progreso after having left it (or reopening it fresh)
+    // must retire whatever Chart.js instances the PREVIOUS Progreso mount
+    // left running — each expanded exercise row keeps its own chart alive
+    // for as long as that mount lives (see progreso.js's `montado` guard),
+    // and montarProgreso()'s own innerHTML = "" only detaches their
+    // canvases, it doesn't stop Chart.js's listeners on them (I3, final-
+    // review brief — same leak family as the timers/images above).
+    detenerTodasLasGraficas();
+    // Dynamic import, never static (same reasoning as graficas.js's own
+    // cargarChart() for Chart.js itself): the six modules behind Progreso
+    // (progreso.js, grafica-peso.js, grafica-ejercicio.js, metricas.js,
+    // tabla-datos.js, peso-corporal.js) load only once this tab is actually
+    // opened, not on every page load for a user who trains without ever
+    // looking at it.
+    import("./progreso.js").then(({ montarProgreso }) => montarProgreso(contenedor, unidad));
+    return;
+  }
+  pintarDia(contenedor, claveActiva, unidad, alReiniciar);
+}
+
 // `alReiniciar`, if given, is called after a confirmed "Reiniciar" tap
 // clears today's checkmarks for the visible block — app.js uses it to
 // refresh the #lastReset footer note without pintarDia needing to know that
@@ -73,6 +128,19 @@ export function pintarDia(contenedor, claveDia, unidad, alReiniciar) {
   // it's disconnected first.
   clearAllTimers();
   detenerTodasLasImagenes();
+  // Leaving Progreso FOR a day tab is the other direction of the same leak
+  // pintarPanelActivo()'s own detenerTodasLasGraficas() call guards against
+  // — a day panel never creates a chart itself, so this is a no-op on a
+  // day-to-day repaint, but it's what actually retires Progreso's charts
+  // when this function (not montarProgreso) is the one about to overwrite
+  // their container.
+  detenerTodasLasGraficas();
+  // Every montarHistorial() row about to be discarded (day switch, variant
+  // change, edit-mode toggle) registered a refresh callback instead of its
+  // own document listener (see registro.js's escuchasHistorial, I5 final-
+  // review brief) — this is what actually retires them, same family as the
+  // sweeps above.
+  limpiarEscuchasHistorial();
   // The variant selector rebuilds through this same function (see
   // `repintar` below) — a chip click leaves focus on a `.chip-btn` that
   // innerHTML = "" is about to destroy, same problem pintarNav has with the

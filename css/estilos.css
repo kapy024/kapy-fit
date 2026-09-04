@@ -13,6 +13,13 @@
     --moss-ink:#FFFFFF;
     --ring:#B8451D55;
     --shadow: 0 1px 2px rgba(33,29,24,.06), 0 6px 20px rgba(33,29,24,.06);
+    /* Paleta de gráficas (entrega 3) — valores validados contra contraste y
+       daltonismo, no elegidos a ojo (ver restricciones.md). El aqua
+       (--viz-3) queda bajo 3:1 de contraste en modo claro: toda serie que
+       lo use lleva etiqueta directa, nunca solo el color. */
+    --viz-1:#2a78d6;
+    --viz-2:#eb6834;
+    --viz-3:#1baf7a;
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
@@ -28,6 +35,9 @@
       --moss-ink:#12140F;
       --ring:#E27E4355;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+      --viz-1:#3987e5;
+      --viz-2:#d95926;
+      --viz-3:#199e70;
     }
   }
   :root[data-theme="dark"]{
@@ -43,6 +53,9 @@
     --moss-ink:#12140F;
     --ring:#E27E4355;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    --viz-1:#3987e5;
+    --viz-2:#d95926;
+    --viz-3:#199e70;
   }
 
   *{box-sizing:border-box}
@@ -533,6 +546,18 @@
     color:var(--text-dim);
     font-weight:500;
   }
+  /* --- mini-línea de tendencia (tarea 7): vacía y sin ancho cuando no hay
+     nada que dibujar, para no dejar hueco junto a "Historial (0)". --- */
+  .mini-wrap{display:inline-flex; align-items:center}
+  .minilinea{display:block}
+  .minilinea polyline{
+    fill:none;
+    stroke:var(--viz-1);
+    stroke-width:2;
+    stroke-linecap:round;
+    stroke-linejoin:round;
+    vector-effect:non-scaling-stroke;
+  }
   .hist-panel{
     margin-top:9px;
     padding:9px 11px;
@@ -680,3 +705,142 @@
     /* Same iOS zoom-on-focus reasoning as the base .f-input rule. */
     select.f-sel{font-size:16px}
   }
+
+  /* --- gráficas (entrega 3) --- */
+  .grafica-ejercicio{
+    display:flex;
+    flex-direction:column;
+    gap:22px;
+  }
+  .grafica-bloque{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:14px 16px 16px;
+  }
+  .grafica-titulo{
+    font-size:14px;
+    margin:0 0 10px;
+    font-weight:600;
+  }
+  .grafica-lienzo{
+    position:relative;
+    height:220px;
+    margin-bottom:14px;
+  }
+  .grafica-lienzo canvas{
+    width:100% !important;
+    height:100% !important;
+  }
+  .grafica-vacia{
+    background:var(--surface-2);
+    border-radius:8px;
+    padding:14px 16px;
+    font-size:13px;
+    color:var(--text-dim);
+    font-style:italic;
+  }
+  .grafica-nota{
+    font-size:12px;
+    color:var(--text-dim);
+    font-style:italic;
+    margin:0 0 12px;
+  }
+  /* Compartida por .grafica-bloque (grafica-ejercicio.js) y .grafica-peso
+     (grafica-peso.js) — la misma tabla de datos, con la misma pinta, en
+     los dos componentes; nunca declarada dos veces. */
+  .grafica-bloque table, .grafica-peso table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:12.5px;
+    font-variant-numeric:tabular-nums;
+  }
+  .grafica-bloque caption, .grafica-peso caption{
+    text-align:left;
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--text-dim);
+    padding-bottom:6px;
+  }
+  .grafica-bloque th, .grafica-bloque td, .grafica-peso th, .grafica-peso td{
+    text-align:left;
+    padding:5px 8px;
+    border-bottom:1px solid var(--border);
+  }
+
+  /* --- gráfica de peso corporal (tarea 5): reusa .grafica-lienzo/
+     .grafica-vacia/.grafica-nota/la tabla de arriba en su totalidad. --- */
+  .peso-captura{
+    display:flex;
+    align-items:flex-end;
+    flex-wrap:wrap;
+    gap:10px 14px;
+    margin-bottom:16px;
+  }
+  .vista-toggle{
+    display:flex;
+    gap:8px;
+    margin-bottom:12px;
+  }
+
+  /* --- pestaña Progreso (tarea 6) --- */
+  .progreso{
+    display:flex;
+    flex-direction:column;
+    gap:30px;
+  }
+  .progreso-peso h2, .progreso-ejercicios h2{
+    font-size:20px;
+    margin:0 0 12px;
+    font-weight:600;
+  }
+  .progreso-vacio{
+    background:var(--surface-2);
+    border-radius:8px;
+    padding:14px 16px;
+    font-size:13px;
+    color:var(--text-dim);
+  }
+  .progreso-lista{
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+  .progreso-item{
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:var(--surface);
+    overflow:hidden;
+  }
+  .progreso-toggle{
+    width:100%;
+    min-height:24px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:8px;
+    padding:12px 14px;
+    background:none;
+    border:none;
+    color:var(--text);
+    font-size:14px;
+    font-weight:600;
+    text-align:left;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .progreso-toggle:hover{color:var(--accent)}
+  .progreso-toggle::after{
+    content:"▾";
+    color:var(--text-dim);
+    transition:transform .15s;
+    flex:0 0 auto;
+  }
+  .progreso-toggle[aria-expanded="true"]::after{transform:rotate(180deg)}
+  .progreso-panel-graficas{padding:0 14px 16px}
+  .progreso-panel-graficas[hidden]{display:none}

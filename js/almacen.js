@@ -66,6 +66,17 @@ export const LLAVE_EDICIONES_RUTINA = "hierro3:edicionesRutina";
 // so the next comparison is apples to apples. Never shown in the UI and
 // never part of what edicionesRutina() itself returns.
 export const LLAVE_MARCAS_RUTINA = "hierro3:marcasRutina";
+// Body-weight entries, one per calendar date (never per slot — there's only
+// ever one bodyweight on a given day). See js/peso-corporal.js, the only
+// caller: it validates the input (reject non-numeric/negative, reusing
+// unidades.js's aNumeroONull) before ever reaching guardarPeso() below.
+export const LLAVE_PESOS = "hierro3:peso";
+// The peso equivalent of LLAVE_MARCAS/LLAVE_MARCAS_RUTINA above — one
+// timestamp per fecha, used only by sync.js's upload/download conflict
+// resolution for body_weight. Same reasoning: a local write stamps "now",
+// a value that arrives FROM the server is stamped with the server's own
+// timestamp instead.
+export const LLAVE_MARCAS_PESO = "hierro3:marcasPeso";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -125,9 +136,51 @@ function tieneFechaValida(r) {
   return !!r && typeof r.fecha === "string" && r.fecha !== "";
 }
 
+// In-memory cache of LLAVE_REGISTROS's parsed content, keyed by the raw
+// string localStorage last returned for it — cheap to compare on every
+// call, so a read that finds the string unchanged skips JSON.parse (and
+// the filter/sort/spread work historial()/historialDeSlot() do on top of
+// it) instead of redoing it from scratch every time. registro.js's history
+// panel reads this store twice per exercise row on every render
+// (refrescarContador() + montarMinilinea()) — with a year of history (a
+// few thousand rows) that made a single checkbox tap, after enough
+// renders, cost dozens of full-store reparses (measured: 58 reads, 236 ms
+// — see I5, final-review brief). Comparing the raw string — rather than
+// only invalidating from inside escribirRegistro() below — also keeps this
+// safe against anything that writes LLAVE_REGISTROS directly without going
+// through it: almacen.test.js's own fixtures do exactly that, by design,
+// to seed corrupted/edge-case data between tests.
+let cacheTextoRegistros;
+let cacheTodoRegistros = null;
+let contadorReparseosRegistros = 0;
+
+function todoRegistros() {
+  let texto;
+  try {
+    texto = localStorage.getItem(LLAVE_REGISTROS);
+  } catch (_) {
+    texto = null;
+  }
+  if (texto !== cacheTextoRegistros) {
+    cacheTextoRegistros = texto;
+    cacheTodoRegistros = leerJSON(LLAVE_REGISTROS, {});
+    contadorReparseosRegistros++;
+  }
+  return cacheTodoRegistros;
+}
+
+// Test-only seam: how many times todoRegistros() has actually reparsed
+// LLAVE_REGISTROS from scratch (a cache miss) since the page loaded —
+// almacen.test.js uses this to prove historial()/historialDeSlot() reuse
+// the cache across repeated reads instead of reparsing every time (I5,
+// final-review brief). Never used outside tests.
+export function _contarReparseosRegistrosParaPruebas() {
+  return contadorReparseosRegistros;
+}
+
 // Returns every record of one routine row (`slot`), ascending by date.
 export function historialDeSlot(slot) {
-  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const todo = todoRegistros();
   const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   return lista.filter(tieneFechaValida).sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
@@ -141,7 +194,7 @@ export function historialDeSlot(slot) {
 // record itself is untouched), so a chart can tell apart, say, the light
 // and the heavy set of the same exercise inside one history.
 export function historial(slug) {
-  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const todo = todoRegistros();
   const juntos = [];
   for (const slot of Object.keys(todo)) {
     const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
@@ -163,13 +216,26 @@ export function registroDe(slot, fecha) {
 // from a prior save don't survive), or appends it if that date has no
 // record yet.
 function escribirRegistro(slot, registro) {
-  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const todo = todoRegistros();
   const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   const i = lista.findIndex((r) => r.fecha === registro.fecha);
   if (i >= 0) lista[i] = registro;
   else lista.push(registro);
   todo[slot] = lista;
-  return escribirJSON(LLAVE_REGISTROS, todo);
+  const ok = escribirJSON(LLAVE_REGISTROS, todo);
+  if (!ok) {
+    // `todo` IS the cached object (todoRegistros() above, never a fresh
+    // copy) — already mutated by the lines above even though the write
+    // below never landed. A failed write must never leave that phantom
+    // mutation visible to the next historial()/historialDeSlot() read: the
+    // raw-string check in todoRegistros() can't catch it on its own here
+    // (actual storage never changed, so the string still matches), so the
+    // cache is forced back to "reparse next time" instead — the next read
+    // gets what's ACTUALLY on disk, which never had this write.
+    cacheTextoRegistros = undefined;
+    cacheTodoRegistros = null;
+  }
+  return ok;
 }
 
 function claveMarca(slot, fecha) {
@@ -408,6 +474,41 @@ export function marcarNoAdoptado(slot, fecha) {
   return escribirJSON(LLAVE_NO_ADOPTADOS, marcas);
 }
 
+// The peso equivalent of claveMarca(slot, fecha) above: body weight has no
+// slot, only a fecha, so the key is prefixed "peso|" instead — a slot string
+// is always "<dia>:<bloque>:<slug>" (colons, see rutina.js), so this can
+// never collide with a real claveMarca(slot, fecha) key in the same
+// LLAVE_NO_ADOPTADOS map.
+function claveMarcaPeso(fecha) {
+  return `peso|${fecha}`;
+}
+
+// True if `fecha`'s body-weight entry was explicitly declined when offered
+// for adoption (see marcarPesoNoAdoptado() below) — checked by sync.js's
+// descargarPesos() so a declined weigh-in is never silently replaced by
+// whatever the server has, same guarantee esNoAdoptado() gives "registro"
+// entries (see C1 in the final-review brief: this was missing entirely,
+// which let a declined body weight upload itself on the very next sync, or
+// be overwritten by a download when there was nothing local queued to
+// protect it).
+export function esPesoNoAdoptado(fecha) {
+  const marcas = leerJSON(LLAVE_NO_ADOPTADOS, {});
+  return marcas[claveMarcaPeso(fecha)] === true;
+}
+
+// Records that the user declined to upload `fecha`'s body weight when
+// offered adoption. Shares the LLAVE_NO_ADOPTADOS store with
+// marcarNoAdoptado() above (claveMarcaPeso()'s "peso|" prefix keeps the two
+// namespaces apart) rather than a second key, since both answer the exact
+// same question — "did the user say no to uploading this?" — for two
+// different record shapes. Returns true if persisted, false if storage
+// refused it — same contract as every other write here.
+export function marcarPesoNoAdoptado(fecha) {
+  const marcas = leerJSON(LLAVE_NO_ADOPTADOS, {});
+  marcas[claveMarcaPeso(fecha)] = true;
+  return escribirJSON(LLAVE_NO_ADOPTADOS, marcas);
+}
+
 // Returns the ISO timestamp of the last confirmed "Reiniciar" tap, or null
 // if it has never happened.
 export function ultimoReinicio() {
@@ -418,6 +519,85 @@ export function ultimoReinicio() {
 // storage refused it — same contract as every other write here.
 export function guardarUltimoReinicio() {
   return escribirJSON(LLAVE_ULTIMO_RESET, new Date().toISOString());
+}
+
+// --- peso corporal (ver js/peso-corporal.js, que valida antes de llamar aquí) ---
+
+// True for a stored peso entry with a usable fecha and a finite kg — same
+// defense tieneFechaValida() gives records above, so a hand-edited or
+// corrupted entry is dropped instead of taking pesos()/pesoDe() down with
+// it (e.g. a broken NaN from a bug in a future version).
+function esPesoValido(p) {
+  return !!p && typeof p.fecha === "string" && p.fecha !== "" &&
+    typeof p.kg === "number" && Number.isFinite(p.kg);
+}
+
+// Shared by guardarPeso()/aplicarPesoRemoto(): replaces the entry for
+// `fecha` entirely (never a merge — there's only ever one field, kg, so
+// there's nothing to merge), or appends it if that date has no entry yet.
+function escribirPeso(fecha, kg) {
+  const lista = leerJSON(LLAVE_PESOS, []);
+  const arr = Array.isArray(lista) ? lista : [];
+  const i = arr.findIndex((p) => p && p.fecha === fecha);
+  const entrada = { fecha, kg };
+  if (i >= 0) arr[i] = entrada;
+  else arr.push(entrada);
+  return escribirJSON(LLAVE_PESOS, arr);
+}
+
+// Every saved body-weight entry, ascending by date — same ordering
+// historialDeSlot() gives exercise records.
+export function pesos() {
+  const lista = leerJSON(LLAVE_PESOS, []);
+  const arr = Array.isArray(lista) ? lista : [];
+  return arr.filter(esPesoValido).sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
+// The kg recorded on `fecha`, or null if there is none.
+export function pesoDe(fecha) {
+  const encontrado = pesos().find((p) => p.fecha === fecha);
+  return encontrado ? encontrado.kg : null;
+}
+
+// The local timestamp for `fecha`, or null if never marked — same role
+// marcaDe()/marcaDeRutina() play for their own tables. sync.js's
+// descargar() compares this against the server's `updated_at` to decide
+// who wins a download conflict for body_weight.
+export function marcaDePeso(fecha) {
+  const marcas = leerJSON(LLAVE_MARCAS_PESO, {});
+  const valor = marcas[fecha];
+  return typeof valor === "string" ? valor : null;
+}
+
+function marcarLocalPeso(fecha, iso) {
+  const marcas = leerJSON(LLAVE_MARCAS_PESO, {});
+  marcas[fecha] = iso;
+  escribirJSON(LLAVE_MARCAS_PESO, marcas);
+}
+
+// Persists `kg` for `fecha` (assumed already validated — see
+// js/peso-corporal.js's guardarPeso(), the only caller from outside this
+// module) and queues it for upload. Same persisted/not-persisted contract
+// as guardarRegistro(): only a write that actually landed gets marked and
+// queued, so a failed write (quota full, private mode) never leaves a
+// pendiente pointing at data the app can't show.
+export function guardarPeso(fecha, kg) {
+  const ok = escribirPeso(fecha, kg);
+  if (ok) {
+    marcarLocalPeso(fecha, new Date().toISOString());
+    encolar({ tipo: "peso", entidad: "body_weight", datos: { fecha, kg } });
+  }
+  return ok;
+}
+
+// Writes a peso entry that came FROM the server (sync.js's descargar(), or
+// a losing "peso" upload corrected in place) — never queued for
+// re-upload, same reasoning as aplicarRegistroRemoto(). The local mark is
+// stamped with the server's own `updated_at`, not "now".
+export function aplicarPesoRemoto(fecha, kg, marcaServidor) {
+  const ok = escribirPeso(fecha, kg);
+  if (ok) marcarLocalPeso(fecha, marcaServidor);
+  return ok;
 }
 
 // --- cola de pendientes (ver sync.js, que la drena) ---
@@ -447,6 +627,9 @@ function claveLogicaPendiente(pendiente) {
   }
   if (pendiente.tipo === "rutina_bloque") {
     return `rutina_bloque:${pendiente.datos.diaClave}:${pendiente.datos.bloqueClave}`;
+  }
+  if (pendiente.tipo === "peso") {
+    return `peso:${pendiente.datos.fecha}`;
   }
   return null;
 }

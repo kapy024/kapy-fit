@@ -9,7 +9,9 @@ import {
 } from "./sync.js";
 import {
   guardarRegistro, registroDe, marcaDe, pendientes, guardarPreferencias, adopcionResuelta,
-  LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS, LLAVE_PREFS, LLAVE_ADOPCION, LLAVE_NO_ADOPTADOS
+  guardarPeso, pesoDe,
+  LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS, LLAVE_PREFS, LLAVE_ADOPCION, LLAVE_NO_ADOPTADOS,
+  LLAVE_PESOS, LLAVE_MARCAS_PESO
 } from "./almacen.js";
 
 const SLOT = "dia3:base:sentadilla";
@@ -21,6 +23,8 @@ function limpiar() {
   localStorage.removeItem(LLAVE_PREFS);
   localStorage.removeItem(LLAVE_ADOPCION);
   localStorage.removeItem(LLAVE_NO_ADOPTADOS);
+  localStorage.removeItem(LLAVE_PESOS);
+  localStorage.removeItem(LLAVE_MARCAS_PESO);
   _reiniciarEstadoParaPruebas();
 }
 
@@ -407,4 +411,144 @@ test("rechazar no protege un slot/fecha distinto: una descarga normal ahí sí a
 
   assertEq(r.traidos, 1);
   assertEq(registroDe(SLOT, "2026-09-05").pesoKg, 50);
+});
+
+// --- C1 (revisión final de rama): la compuerta de adopción debe cubrir
+// también el peso corporal, no solo las series de ejercicio — reproduce
+// los dos casos exactos del hallazgo: (a) un peso guardado junto con un
+// registro y rechazado igual sube en el siguiente sincronizar(), y (b) un
+// peso guardado SOLO (sin ningún registro) nunca activa la oferta y sube
+// solo. Ambas pruebas deben fallar si historialSinAdoptar() vuelve a
+// filtrar solo por tipo === "registro".
+
+// Doble mínimo de cliente para descargar(): soporta las cuatro tablas que
+// descargar() consulta (exercise_logs, routine_exercises, profiles,
+// body_weight), cada una con su propia lista de filas — a diferencia de
+// clienteConFilas() de arriba, que solo cubre exercise_logs.
+function clienteMultiTabla({ registros = [], rutina = [], perfil = [], pesos: filasPesos = [] } = {}) {
+  const porTabla = {
+    exercise_logs: registros,
+    routine_exercises: rutina,
+    profiles: perfil,
+    body_weight: filasPesos
+  };
+  return {
+    from(tabla) {
+      const datos = porTabla[tabla] || [];
+      return { select: () => ({ eq: () => Promise.resolve({ data: datos, error: null }) }) };
+    }
+  };
+}
+
+test("un peso guardado sin sesión sí cuenta para la oferta de adopción, aunque no haya ninguna serie", () => {
+  limpiar();
+  guardarPeso("2026-09-01", 80);
+
+  assertEq(pendientes().length, 1, "el peso se encoló como cualquier otro pendiente");
+  assertEq(debeOfrecerAdopcion(), true, "un peso sin sesión también es historial que ofrecer");
+  assertEq(historialSinAdoptar().length, 1);
+});
+
+test("con una serie y un peso guardados sin sesión, rechazar saca a los dos de la cola", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
+  guardarPeso("2026-09-01", 80);
+  assertEq(pendientes().length, 2, "un pendiente de registro y uno de peso");
+  assertEq(historialSinAdoptar().length, 2, "los dos cuentan como historial a adoptar");
+
+  rechazarAdopcion();
+
+  assertEq(pendientes().length, 0, "rechazar debe sacar TAMBIÉN el peso de la cola, no solo la serie");
+});
+
+// El defecto real, de punta a punta: "Ahora no" con una serie Y un peso
+// pendientes, y comprobar que un sincronizar() posterior no sube ninguno
+// de los dos — antes de este arreglo el peso subía igual, porque
+// historialSinAdoptar() ni lo veía ni lo sacaba de la cola.
+test("tras rechazar con una serie y un peso pendientes, un sincronizar() posterior no sube el peso", async () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
+  guardarPeso("2026-09-01", 80);
+  rechazarAdopcion();
+
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+  const r = await sincronizar(depsConSesion({ cliente: async () => cliente }));
+
+  assertEq(llamadas.length, 0, "ni la serie ni el peso debieron llegar a la red: rechazar ya los sacó de la cola");
+  assertEq(r.enviados, 0);
+  assertEq(pendientes().length, 0);
+  assertEq(pesoDe("2026-09-01"), 80, "el peso local sigue intacto, solo que nunca se subió");
+});
+
+// El segundo caso del hallazgo: SOLO un peso guardado (ninguna serie). Con
+// el defecto presente, historialSinAdoptar() da 0 (no ve pesos),
+// debeOfrecerAdopcion() da false, y el aviso nunca aparece — así que el
+// siguiente sincronizar() (el de la carga de página, el de "online",
+// cualquiera) sube el peso sin haber preguntado nunca.
+test("solo con un peso pendiente (sin series), la oferta de adopción aparece y sincronizar() no lo sube solo", async () => {
+  limpiar();
+  guardarPeso("2026-09-01", 80);
+  assertEq(debeOfrecerAdopcion(), true, "el aviso debe aparecer aunque no haya ninguna serie pendiente");
+
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+  const r = await sincronizar(depsConSesion({ cliente: async () => cliente }));
+
+  assertEq(llamadas.length, 0, "sin responder la oferta, el peso no debe subir solo");
+  assertEq(r.detalle, "adopción de historial pendiente de respuesta");
+  assertEq(pendientes().length, 1, "el peso sigue en la cola, sin subir");
+});
+
+test("aceptar sube también el peso pendiente, por la cola normal", async () => {
+  limpiar();
+  guardarPeso("2026-09-01", 80);
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+
+  const r = await aceptarAdopcion(depsConSesion({ cliente: async () => cliente }));
+
+  assertEq(r.enviados, 1);
+  assertEq(llamadas.length, 1, "el peso debió subir por subir_peso_corporal");
+  assertEq(pendientes().length, 0);
+});
+
+// Mismo defecto que el de descargar()/esNoAdoptado() para registros (I2 de
+// arriba), pero para descargarPesos()/esPesoNoAdoptado(): rechazar un peso
+// también debe sostenerse frente a una descarga posterior con algo más
+// nuevo en el servidor, no solo frente a la subida.
+test("rechazar un peso también lo protege de una descarga posterior con algo más nuevo en el servidor", async () => {
+  limpiar();
+  guardarPeso("2026-09-01", 100);
+  rechazarAdopcion();
+  assertEq(pendientes().length, 0, "rechazar ya sacó el peso de la cola");
+
+  const filaServidor = {
+    measured_on: "2026-09-01", weight_kg: 80,
+    updated_at: "2099-01-01T00:00:00.000Z" // más nuevo que cualquier marca local
+  };
+  const r = await descargar({
+    hayConfig: () => true,
+    sesionActual: async () => ({ user: { id: "u1" } }),
+    cliente: async () => clienteMultiTabla({ pesos: [filaServidor] })
+  });
+
+  assertEq(r.pesosAplicados, 0, "el peso declinado no se cuenta como traído: no se tocó");
+  assertEq(pesoDe("2026-09-01"), 100, "\"Ahora no\" también protege el peso de una descarga que lo pisaría");
+});
+
+test("rechazar un peso no protege otra fecha distinta: una descarga normal ahí sí aplica", async () => {
+  limpiar();
+  guardarPeso("2026-09-01", 100);
+  rechazarAdopcion();
+
+  const filaServidor = {
+    measured_on: "2026-09-05", weight_kg: 50,
+    updated_at: "2099-01-01T00:00:00.000Z"
+  };
+  const r = await descargar({
+    hayConfig: () => true,
+    sesionActual: async () => ({ user: { id: "u1" } }),
+    cliente: async () => clienteMultiTabla({ pesos: [filaServidor] })
+  });
+
+  assertEq(r.pesosAplicados, 1);
+  assertEq(pesoDe("2026-09-05"), 50);
 });

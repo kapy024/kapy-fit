@@ -1,6 +1,6 @@
 // Entry point. Wires the nav to the panel renderer and nothing else.
 import { RUTINA } from "./rutina.js";
-import { pintarNav, pintarDia } from "./render.js";
+import { pintarNav, pintarPanelActivo } from "./render.js";
 import {
   preferencias, guardarPreferencias, migracionResuelta, marcarMigracionResuelta,
   ultimoReinicio
@@ -40,7 +40,7 @@ function pintarUltimoReinicio() {
 
 function refrescar() {
   pintarNav(nav, diaActivo, seleccionar);
-  pintarDia(panels, diaActivo, unidad, pintarUltimoReinicio);
+  pintarPanelActivo(panels, diaActivo, unidad, pintarUltimoReinicio);
 }
 
 function seleccionar(clave) {
