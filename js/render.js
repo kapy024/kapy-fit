@@ -17,6 +17,7 @@ import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
 import {
   modoEdicionActivo, pintarBotonModoEdicion, pintarFilaEdicion
 } from "./editor-rutina.js";
+import { CLAVE_PROGRESO, montarProgreso } from "./progreso.js";
 
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
@@ -26,6 +27,16 @@ function escaparHtml(s) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 }
+
+// The Progreso tab drawn as one more pill after día 7 — it carries no real
+// bloques (it isn't a training day), but a non-empty `bloques` keeps
+// pintarPestana from styling it as the dashed "descanso" pill below.
+const PESTANA_PROGRESO = {
+  clave: CLAVE_PROGRESO,
+  etiqueta: "Progreso",
+  enfoque: "Tu avance",
+  bloques: [{}]
+};
 
 // `diaActivo` is taken explicitly instead of read off module state, so a
 // caller that restores a saved day on startup (no click involved) still
@@ -40,6 +51,10 @@ export function pintarNav(contenedor, diaActivo, alSeleccionar) {
   RUTINA.forEach((d) => {
     contenedor.appendChild(pintarPestana(d, diaActivo, alSeleccionar));
   });
+  // Same pill/role=tab/aria-selected markup as every day, appended last —
+  // it inherits the click wiring and the focus restitution below for
+  // free, exactly like día 7 does.
+  contenedor.appendChild(pintarPestana(PESTANA_PROGRESO, diaActivo, alSeleccionar));
   if (teniaFoco) {
     const activa = contenedor.querySelector('[aria-selected="true"]');
     if (activa) activa.focus();
@@ -58,6 +73,23 @@ function claveBloqueActivo(d) {
   const guardada = bloqueActivo[d.clave];
   if (guardada && d.bloques.some((b) => b.clave === guardada)) return guardada;
   return d.bloques[0].clave;
+}
+
+// Draws whichever screen `claveActiva` names — the Progreso tab (its own
+// module, js/progreso.js — never a routine day, so it takes no
+// `alReiniciar`) or an actual training day (pintarDia, below, unchanged).
+// app.js calls this instead of pintarDia directly so switching TO Progreso
+// still sweeps a running rest timer / image observer left behind by the
+// day panel it replaces — the same cleanup pintarDia already does for a
+// day-to-day switch, see its own comment below.
+export function pintarPanelActivo(contenedor, claveActiva, unidad, alReiniciar) {
+  if (claveActiva === CLAVE_PROGRESO) {
+    clearAllTimers();
+    detenerTodasLasImagenes();
+    montarProgreso(contenedor, unidad);
+    return;
+  }
+  pintarDia(contenedor, claveActiva, unidad, alReiniciar);
 }
 
 // `alReiniciar`, if given, is called after a confirmed "Reiniciar" tap
