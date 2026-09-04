@@ -86,3 +86,12 @@ test("un peso rechazado por inválido tampoco encola nada", () => {
   assertEq(guardarPeso("2026-09-01", -5), false);
   assertEq(pendientes().filter((p) => p.tipo === "peso").length, 0);
 });
+
+test("un peso corporal de cero se rechaza y no se encola", () => {
+  limpiar();
+  assertEq(guardarPeso("2026-09-04", 0), false);
+  assertEq(guardarPeso("2026-09-04", "0"), false);
+  assertEq(pesos().length, 0);
+  assertEq(pendientes().length, 0);
+});
+
