@@ -66,6 +66,17 @@ export const LLAVE_EDICIONES_RUTINA = "hierro3:edicionesRutina";
 // so the next comparison is apples to apples. Never shown in the UI and
 // never part of what edicionesRutina() itself returns.
 export const LLAVE_MARCAS_RUTINA = "hierro3:marcasRutina";
+// Body-weight entries, one per calendar date (never per slot — there's only
+// ever one bodyweight on a given day). See js/peso-corporal.js, the only
+// caller: it validates the input (reject non-numeric/negative, reusing
+// unidades.js's aNumeroONull) before ever reaching guardarPeso() below.
+export const LLAVE_PESOS = "hierro3:peso";
+// The peso equivalent of LLAVE_MARCAS/LLAVE_MARCAS_RUTINA above — one
+// timestamp per fecha, used only by sync.js's upload/download conflict
+// resolution for body_weight. Same reasoning: a local write stamps "now",
+// a value that arrives FROM the server is stamped with the server's own
+// timestamp instead.
+export const LLAVE_MARCAS_PESO = "hierro3:marcasPeso";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -420,6 +431,85 @@ export function guardarUltimoReinicio() {
   return escribirJSON(LLAVE_ULTIMO_RESET, new Date().toISOString());
 }
 
+// --- peso corporal (ver js/peso-corporal.js, que valida antes de llamar aquí) ---
+
+// True for a stored peso entry with a usable fecha and a finite kg — same
+// defense tieneFechaValida() gives records above, so a hand-edited or
+// corrupted entry is dropped instead of taking pesos()/pesoDe() down with
+// it (e.g. a broken NaN from a bug in a future version).
+function esPesoValido(p) {
+  return !!p && typeof p.fecha === "string" && p.fecha !== "" &&
+    typeof p.kg === "number" && Number.isFinite(p.kg);
+}
+
+// Shared by guardarPeso()/aplicarPesoRemoto(): replaces the entry for
+// `fecha` entirely (never a merge — there's only ever one field, kg, so
+// there's nothing to merge), or appends it if that date has no entry yet.
+function escribirPeso(fecha, kg) {
+  const lista = leerJSON(LLAVE_PESOS, []);
+  const arr = Array.isArray(lista) ? lista : [];
+  const i = arr.findIndex((p) => p && p.fecha === fecha);
+  const entrada = { fecha, kg };
+  if (i >= 0) arr[i] = entrada;
+  else arr.push(entrada);
+  return escribirJSON(LLAVE_PESOS, arr);
+}
+
+// Every saved body-weight entry, ascending by date — same ordering
+// historialDeSlot() gives exercise records.
+export function pesos() {
+  const lista = leerJSON(LLAVE_PESOS, []);
+  const arr = Array.isArray(lista) ? lista : [];
+  return arr.filter(esPesoValido).sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
+// The kg recorded on `fecha`, or null if there is none.
+export function pesoDe(fecha) {
+  const encontrado = pesos().find((p) => p.fecha === fecha);
+  return encontrado ? encontrado.kg : null;
+}
+
+// The local timestamp for `fecha`, or null if never marked — same role
+// marcaDe()/marcaDeRutina() play for their own tables. sync.js's
+// descargar() compares this against the server's `updated_at` to decide
+// who wins a download conflict for body_weight.
+export function marcaDePeso(fecha) {
+  const marcas = leerJSON(LLAVE_MARCAS_PESO, {});
+  const valor = marcas[fecha];
+  return typeof valor === "string" ? valor : null;
+}
+
+function marcarLocalPeso(fecha, iso) {
+  const marcas = leerJSON(LLAVE_MARCAS_PESO, {});
+  marcas[fecha] = iso;
+  escribirJSON(LLAVE_MARCAS_PESO, marcas);
+}
+
+// Persists `kg` for `fecha` (assumed already validated — see
+// js/peso-corporal.js's guardarPeso(), the only caller from outside this
+// module) and queues it for upload. Same persisted/not-persisted contract
+// as guardarRegistro(): only a write that actually landed gets marked and
+// queued, so a failed write (quota full, private mode) never leaves a
+// pendiente pointing at data the app can't show.
+export function guardarPeso(fecha, kg) {
+  const ok = escribirPeso(fecha, kg);
+  if (ok) {
+    marcarLocalPeso(fecha, new Date().toISOString());
+    encolar({ tipo: "peso", entidad: "body_weight", datos: { fecha, kg } });
+  }
+  return ok;
+}
+
+// Writes a peso entry that came FROM the server (sync.js's descargar(), or
+// a losing "peso" upload corrected in place) — never queued for
+// re-upload, same reasoning as aplicarRegistroRemoto(). The local mark is
+// stamped with the server's own `updated_at`, not "now".
+export function aplicarPesoRemoto(fecha, kg, marcaServidor) {
+  const ok = escribirPeso(fecha, kg);
+  if (ok) marcarLocalPeso(fecha, marcaServidor);
+  return ok;
+}
+
 // --- cola de pendientes (ver sync.js, que la drena) ---
 
 function generarIdPendiente() {
@@ -447,6 +537,9 @@ function claveLogicaPendiente(pendiente) {
   }
   if (pendiente.tipo === "rutina_bloque") {
     return `rutina_bloque:${pendiente.datos.diaClave}:${pendiente.datos.bloqueClave}`;
+  }
+  if (pendiente.tipo === "peso") {
+    return `peso:${pendiente.datos.fecha}`;
   }
   return null;
 }

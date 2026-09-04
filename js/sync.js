@@ -9,7 +9,8 @@
 import {
   pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto,
   adopcionResuelta, marcarAdopcionResuelta, esNoAdoptado, marcarNoAdoptado,
-  marcaDeRutina, aplicarEdicionRemotaBloque, preferencias, aplicarPreferenciasRemotas
+  marcaDeRutina, aplicarEdicionRemotaBloque, preferencias, aplicarPreferenciasRemotas,
+  marcaDePeso, aplicarPesoRemoto
 } from "./almacen.js";
 import { cliente, hayConfig } from "./db.js";
 import { sesionActual, alCambiarSesion } from "./auth.js";
@@ -134,6 +135,19 @@ async function enviarOperacion(c, userId, op) {
     // mark stamp an earlier edit's still-in-flight data.
     const editadoEn = op.encoladoEn || marcaDeRutina(diaClave, bloqueClave) || FECHA_MINIMA;
     return enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios, editadoEn);
+  }
+  if (op.tipo === "peso") {
+    const { fecha, kg } = op.datos;
+    // Same reasoning as "registro"/"rutina_bloque" above: the pendiente's
+    // OWN stamp, never a fresh marcaDePeso() read at send time.
+    const editadoEn = op.encoladoEn || marcaDePeso(fecha) || FECHA_MINIMA;
+    const { data, error } = await c.rpc("subir_peso_corporal", {
+      p_fecha: fecha,
+      p_kg: kg,
+      p_editado_en: editadoEn
+    });
+    if (error) return { error };
+    return { error: null, aplicado: data ? data.aplicado : false, fila: data ? data.fila : null };
   }
   // An operation type this build of sync.js doesn't know how to send yet
   // must never jam the queue forever behind it — drop it as if it had
@@ -356,6 +370,12 @@ export async function sincronizar(deps = DEPENDENCIAS_REALES) {
         const marcaServidor = marcaMaxima(resultado.filas.map((f) => f.editado_en));
         aplicarEdicionRutinaRemota(op.datos.diaClave, op.datos.bloqueClave, ejerciciosPlanos, marcaServidor);
       }
+      // Same idea as "registro" above, for body_weight: the server already
+      // had something newer for this fecha, so the local copy is corrected
+      // to what actually won instead of going on showing a discarded value.
+      if (op.tipo === "peso" && resultado.aplicado === false && resultado.fila) {
+        aplicarPesoRemoto(resultado.fila.measured_on, resultado.fila.weight_kg, resultado.fila.updated_at);
+      }
       quitarPendiente(op.id);
       enviados++;
     } catch (e) {
@@ -494,6 +514,40 @@ async function descargarPerfil(c, userId) {
   return { aplicado: aplicarPreferenciasRemotas({ unidad: fila.unidad }) };
 }
 
+// Pulls every body_weight row belonging to the signed-in user and merges
+// each one into local storage. Same failure isolation and same rule 2 + 4
+// as exercise_logs' descargar() (there's no adoption offer for peso — rule
+// 1 doesn't apply here, same as it doesn't for rutina/perfil): a fecha
+// still in the "peso" upload queue is never overwritten, and otherwise the
+// local mark (marcaDePeso(), stamped at write time) is compared against
+// the row's updated_at — the more recent one wins.
+async function descargarPesos(c, userId) {
+  let filas;
+  try {
+    const { data, error } = await c.from("body_weight").select("*").eq("user_id", userId);
+    if (error) return { aplicados: 0 };
+    filas = Array.isArray(data) ? data : [];
+  } catch (_e) {
+    return { aplicados: 0 };
+  }
+
+  const enCola = new Set(
+    pendientes().filter((p) => p.tipo === "peso").map((p) => p.datos.fecha)
+  );
+
+  let aplicados = 0;
+  for (const fila of filas) {
+    const fecha = fila.measured_on;
+    if (enCola.has(fecha)) continue; // regla 2: lo local sin subir gana
+
+    const marcaLocal = marcaDePeso(fecha);
+    if (marcaLocal && new Date(marcaLocal) >= new Date(fila.updated_at)) continue; // regla 4: local gana
+
+    if (aplicarPesoRemoto(fecha, fila.weight_kg, fila.updated_at)) aplicados++;
+  }
+  return { aplicados };
+}
+
 // Pulls every exercise_logs row belonging to the signed-in user and merges
 // each one into local storage. Never throws — same contract as
 // sincronizar(): no config, no session, a network error, or a rejected
@@ -574,17 +628,19 @@ export async function descargar(deps = DEPENDENCIAS_REALES) {
     if (aplicarRegistroRemoto(slot, filaARegistro(fila), fila.updated_at)) traidos++;
   }
 
-  // Rutina y perfil se bajan por separado de exercise_logs (tablas
+  // Rutina, perfil y peso se bajan por separado de exercise_logs (tablas
   // distintas, reglas de conflicto propias) — cada una aislada en su propio
-  // try/catch (ver descargarRutina()/descargarPerfil()) para que un doble
-  // de pruebas que solo conoce exercise_logs, o un fallo real en cualquiera
-  // de las dos, nunca tumbe la descarga de registros de arriba, que ya
-  // corrió. `traidos` se queda tal cual (exercise_logs, contrato existente);
-  // rutinaAplicada/perfilAplicado son campos nuevos, aditivos.
+  // try/catch (ver descargarRutina()/descargarPerfil()/descargarPesos())
+  // para que un doble de pruebas que solo conoce exercise_logs, o un fallo
+  // real en cualquiera de las tres, nunca tumbe la descarga de registros de
+  // arriba, que ya corrió. `traidos` se queda tal cual (exercise_logs,
+  // contrato existente); rutinaAplicada/perfilAplicado/pesosAplicados son
+  // campos nuevos, aditivos.
   const { aplicados: rutinaAplicada } = await descargarRutina(c, sesion.user.id);
   const { aplicado: perfilAplicado } = await descargarPerfil(c, sesion.user.id);
+  const { aplicados: pesosAplicados } = await descargarPesos(c, sesion.user.id);
 
-  return { traidos, rutinaAplicada, perfilAplicado, detalle: "ok" };
+  return { traidos, rutinaAplicada, perfilAplicado, pesosAplicados, detalle: "ok" };
 }
 
 // --- adopción del historial local sin sesión ---
