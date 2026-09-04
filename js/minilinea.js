@@ -3,7 +3,20 @@
 // awaited here — a per-row sparkline drawn on every screen used mid-workout
 // has no business pulling in a charting library just to draw eight dots.
 // Hand-built SVG, mounted synchronously, with no interaction of its own.
-import { historial } from "./almacen.js";
+//
+// Reads historialDeSlot(slot) — ONE slot's own history — never historial(
+// slug), which would merge in every OTHER slot sharing the same exercise
+// (día 1's light and heavy press militar, día 5's repeated remo). Each row
+// in registro.js's history panel already belongs to exactly one slot, so
+// its sparkline must speak about that slot alone: blending in another
+// slot's numbers can silently reverse the drawn trend and its aria-label
+// with it (see I2 in the final-review brief — a 40->50 kg heavy-slot
+// progression next to a same-day 20 kg light-slot entry rendered as
+// "Tendencia a la baja: de 40 kg a 20 kg", the opposite of what actually
+// happened). js/grafica-ejercicio.js's per-exercise chart is the one place
+// that's still allowed to combine slots — and even there, never into one
+// blended line (see its own header comment).
+import { historialDeSlot } from "./almacen.js";
 import { serieTemporal } from "./metricas.js";
 import { formatear } from "./unidades.js";
 
@@ -18,12 +31,13 @@ const ANCHO = 48;
 const ALTO = 16;
 const PAD = 2;
 
-// Pure: the last `VENTANA` {fecha, valor} weight points for `slug`, in kg
-// — never converted to the display unit here, since a trend's direction
-// doesn't depend on the unit it's measured in. `suficientes` mirrors the
+// Pure: the last `VENTANA` {fecha, valor} weight points for `slot` (one
+// exercise row, never a whole slug's worth of slots), in kg — never
+// converted to the display unit here, since a trend's direction doesn't
+// depend on the unit it's measured in. `suficientes` mirrors the
 // project-wide "fewer than 2 points, draw nothing" rule.
-export function datosMinilinea(slug) {
-  const serie = serieTemporal(historial(slug), "pesoKg");
+export function datosMinilinea(slot) {
+  const serie = serieTemporal(historialDeSlot(slot), "pesoKg");
   const puntos = serie.slice(-VENTANA);
   return { puntos, suficientes: puntos.length >= MINIMO_PUNTOS };
 }
@@ -81,8 +95,8 @@ function construirPolilinea(valores) {
 // toggle. Synchronous on purpose: unlike montarGraficaEjercicio/
 // montarGraficaPeso there is no `await cargarChart()` anywhere in this
 // path — see the file header.
-export function montarMinilinea(contenedor, slug, unidad) {
-  const { puntos, suficientes } = datosMinilinea(slug);
+export function montarMinilinea(contenedor, slot, unidad) {
+  const { puntos, suficientes } = datosMinilinea(slot);
   if (!suficientes) return null;
 
   const t = tendencia(puntos);

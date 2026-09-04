@@ -416,7 +416,7 @@ function formatearFechaCorta(fechaISO) {
 // built lazily on first open, not at draw time, so a day with many
 // exercises doesn't pay to compute history nobody looks at.
 export function montarHistorial(contenedor, ejercicioRutina, unidad) {
-  const { slug } = ejercicioRutina;
+  const { slug, slot } = ejercicioRutina;
 
   const toggle = document.createElement("button");
   toggle.type = "button";
@@ -473,7 +473,12 @@ export function montarHistorial(contenedor, ejercicioRutina, unidad) {
   function refrescarContador() {
     contador.textContent = `(${historial(slug).length})`;
     miniWrap.innerHTML = "";
-    montarMinilinea(miniWrap, slug, unidad);
+    // This row's own slot, never the slug — a slug shared by more than one
+    // slot (día 1's light/heavy press militar, día 5's repeated remo) would
+    // otherwise blend another slot's numbers into this row's sparkline and
+    // could silently reverse the trend it draws (see I2 in the
+    // final-review brief, and minilinea.js's own header comment).
+    montarMinilinea(miniWrap, slot, unidad);
     if (!panel.hidden) dibujarPanel();
   }
   refrescarContador();
