@@ -8,3 +8,4 @@ config.local.js
 .claude-flow/
 .worktrees/
 connect-iq/developer_key.der
+connect-iq/venu2/bin/
