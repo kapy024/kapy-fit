@@ -244,3 +244,34 @@ terminar). Con `001`, `002` y `006` aplicados en ese orden:
   insertó nada.
 - Conteo final de filas: exactamente las 2 legítimas (una por usuario) —
   nada del intento de `anon` quedó en la base.
+
+## 007_permisos_clonado.sql
+
+Agregado el 2026-09-04, corrigiendo un hallazgo de seguridad de la revisión
+final de rama: `clonar_plantilla(uid)` (`004`) es `security definer` y toma
+el `user_id` como PARÁMETRO en vez de leerlo de `auth.uid()` — a diferencia
+de `subir_registro_ejercicio` (`006`), que sí hace lo correcto. `create
+function` otorga EXECUTE a PUBLIC por omisión y `004` nunca lo revocó, así
+que quedó ejecutable por el rol `anon`. Confirmado contra producción sin
+sesión: la llamada responde `22P02` a un uuid inválido (la función corre de
+verdad) en vez de un error de permisos. Como es `security definer`, corre
+saltándose RLS: cualquiera puede crear el `profiles` de un uuid ajeno y
+reclonarle la plantilla encima, y el comportamiento distinto según el uuid
+ya tenga rutina o no sirve para distinguir cuentas reales de inventadas.
+
+Este archivo solo revoca ese EXECUTE de `public`/`anon`/`authenticated`. El
+trigger `on_auth_user_created` (`004`) sigue funcionando exactamente igual:
+`trigger_clonar_plantilla()` también es `security definer`, así que su
+`perform clonar_plantilla(new.id)` corre como el DUEÑO de la función, y el
+dueño no necesita un grant explícito para ejecutar lo suyo.
+
+Aprovechando la migración, también le agrega `set search_path = public` a
+`tocar_updated_at()` (`005`), la única de las funciones de seguridad de
+este proyecto que no lo tenía todavía.
+
+Aplica este archivo como los demás, en el editor SQL. Las comprobaciones
+(privilegios de `clonar_plantilla`, `search_path` de `tocar_updated_at`, y
+la llamada `anon` por REST que debe pasar de `22P02` a un error de
+permisos) están comentadas al final del propio archivo — no se verificaron
+aquí contra una base local porque el hallazgo ya se confirmó directamente
+contra producción; conviene correrlas ahí después de aplicar.
