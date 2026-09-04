@@ -151,3 +151,30 @@ grant execute on function subir_edicion_rutina(
 -- select (subir_edicion_rutina('<id del renglón del primer usuario>', 'sentadilla', 'dia3:base:sentadilla', 1, 3, '10', 1, null, null, now())).*;
 -- -- Esperado: error ("renglón ... no pertenece a la rutina de este usuario"),
 -- -- nunca una fila del otro usuario modificada.
+
+-- Cierra la misma asimetría que arregló 007, en la función de registros de 006:
+-- CREATE FUNCTION otorga EXECUTE a PUBLIC por omisión. RLS y auth.uid() ya la
+-- protegen (el user_id nunca es parámetro), así que no hay fuga; pero dejarla
+-- llamable por el rol anon no aporta nada y contradice el criterio del resto.
+-- Se resuelve la firma por catálogo en vez de escribirla a mano: un desajuste
+-- de tipos haría fallar el REVOKE y dejaría el permiso abierto sin avisar.
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as firma
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname = 'subir_registro_ejercicio'
+  loop
+    execute format('revoke execute on function %s from public, anon', f.firma);
+  end loop;
+end $$;
+
+-- Comprobación, para pegar después de aplicar:
+--   select p.proname, array_to_string(p.proacl, ' | ') as permisos
+--     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--    where n.nspname = 'public'
+--      and p.proname in ('clonar_plantilla','subir_registro_ejercicio','subir_edicion_rutina');
+--   Ninguna debe listar "=X/" (EXECUTE para PUBLIC) ni "anon=X/".
