@@ -49,9 +49,10 @@ Supabase ya genera para `routine_days`/`routine_blocks`/`routine_exercises`
   secret vive solo como variable de entorno de la función, nunca en el
   reloj ni en el repo.
 - **De ahí en adelante**, el reloj usa ese JWT corto directo contra
-  PostgREST, sujeto a las mismas políticas RLS que ya protegen esas tablas.
-  No hay una segunda ruta de escritura a la medida: la única lógica de
-  negocio nueva es el intercambio de token.
+  PostgREST — lectura de `routine_*` sujeta a RLS, escritura a través de la
+  RPC `subir_registro_ejercicio` que ya existe (§4), también sujeta a RLS
+  (`security invoker`). No hay una segunda ruta de escritura a la medida: la
+  única lógica de negocio nueva de este proyecto es el intercambio de token.
 - **Revocar** un reloj perdido = borrar su fila en `device_tokens`. El JWT
   ya emitido sigue vivo hasta que caduque (máx. 1 hora); después el reloj no
   puede renovarlo.
@@ -79,10 +80,17 @@ como atajo siguiente/anterior):
    regresivo en pantalla y **vibra** al terminar. Se puede cancelar o
    extender.
 
-Cada registro usa el mismo modelo que ya usa la web: `slot` + `exercise_slug`
-+ `logged_on` (fecha de hoy) + `weight_kg`/`sets`/`reps`, respetando el
-`unique (user_id, slot, logged_on)` de `exercise_logs` — repetir el guardado
-en el mismo slot el mismo día es un upsert, igual que en el navegador.
+Cada registro se envía por la **misma RPC que usa la web**,
+`subir_registro_ejercicio` (`sql/006_edicion_cliente.sql`), vía
+`POST /rest/v1/rpc/subir_registro_ejercicio` con el JWT corto del reloj —
+nunca un `insert`/`upsert` directo a `exercise_logs`. Esa función solo pisa
+la fila si `p_editado_en` es más nuevo que lo que el servidor ya tiene: es
+la corrección (commit `b70eb1e`) contra la pérdida silenciosa de datos entre
+dispositivos (dos relojes o reloj+web escribiendo el mismo slot). El reloj
+debe sellar `editado_en` con la hora local **en el momento de capturar la
+serie**, no en el momento de enviarla — el mismo campo que `marcaDe()` usa
+en `almacen.js` — para que una serie que pasó un rato en la cola offline
+(§5) siga comparándose por cuándo se hizo, no por cuándo por fin hubo señal.
 
 ## 5. Persistencia y cola offline
 
