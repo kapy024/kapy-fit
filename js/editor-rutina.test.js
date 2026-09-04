@@ -147,7 +147,14 @@ test("sustituir por un slug que no existe en el catálogo lanza y no cambia nada
 
 // --- quitar: tampoco borra historial ---
 
-test("quitar un ejercicio no borra su historial y recalcula el sufijo de ocurrencia", () => {
+// Nota (C2, revisión final): esta prueba afirmaba antes que quitar la
+// primera ocurrencia renombraba la segunda a "dia1:v1:press-militar-barra"
+// (sufijo recalculado por posición) — y con ese renombre, heredaba el
+// registro de la fila que se fue. Eso era el defecto, no el
+// comportamiento correcto: el slot de la fila sobreviviente ahora es una
+// identidad estable que no se mueve cuando otra fila desaparece, así que
+// su propio registro (guardado bajo SU slot) nunca queda atribuido a otra.
+test("quitar un ejercicio no borra su historial y no le cambia el slot a las demás filas (C2)", () => {
   limpiar();
   const original = snapshotBloque("dia1", "v1");
   // dia1/v1 empieza con dos "press-militar-barra" (ver rutina.js): la
@@ -163,16 +170,18 @@ test("quitar un ejercicio no borra su historial y recalcula el sufijo de ocurren
   assertEq(ok, true);
   assertEq(bloque("dia1", "v1").ejercicios.length, original.length - 1);
 
-  // Lo que era la segunda ocurrencia ahora es la única — pierde el sufijo
-  // "#2" porque ya no hay con qué compartirlo. Se identifica por su nota
-  // (distinta de la primera), no por el slot: eso es justo lo que cambió.
+  // La fila que sobrevive (la que era la segunda ocurrencia) CONSERVA su
+  // propio slot — con el "#2" y todo — en vez de heredar el de la fila que
+  // se fue. Se identifica por su nota (distinta de la primera).
   const restante = bloque("dia1", "v1").ejercicios[0];
   assertEq(restante.nota, original[1].nota, "sobrevive la que era la segunda ocurrencia");
-  assertEq(restante.slot, "dia1:v1:press-militar-barra");
+  assertEq(restante.slot, slotDos, "conserva su propio slot, no hereda el de la fila quitada");
 
-  // Ninguno de los dos historiales originales se borró.
+  // Ninguno de los dos historiales originales se borró, y cada uno se lee
+  // todavía bajo el slot al que en verdad pertenece.
   assertEq(historialDeSlot(slotUno).length, 1);
   assertEq(historialDeSlot(slotDos).length, 1);
+  assertEq(historialDeSlot(slotDos)[0].fecha, "2020-01-02", "el registro de la fila sobreviviente sigue siendo el suyo, no el de la que se fue");
 
   restaurar("dia1", "v1", original);
   localStorage.removeItem(LLAVE_REGISTROS);
@@ -200,22 +209,30 @@ test("reordenar ejercicios con slug distinto no cambia ningún slot", () => {
   restaurar("dia3", "base", original);
 });
 
-test("reordenar dos ocurrencias del mismo slug recalcula el sufijo, no la posición", () => {
+// Nota (C2, revisión final): esta prueba afirmaba antes que reordenar
+// intercambiaba las identidades ("el sufijo lo decide la posición") — así
+// que la fila que aparecía primero después del intercambio se leía (y se
+// guardaba) bajo el slot que antes era del otro renglón. Eso era el mismo
+// defecto que en quitarEjercicio: el slot es una identidad estable de la
+// fila, viaja CON ella, nunca con la posición que ocupa.
+test("reordenar dos ocurrencias del mismo slug no les cambia el slot: cada fila conserva su identidad (C2)", () => {
   limpiar();
   const original = snapshotBloque("dia1", "v1");
+  const slotPrimeroAntes = original[0].slot;
+  const slotSegundoAntes = original[1].slot;
   const notaPrimeroAntes = original[0].nota;
   const notaSegundoAntes = original[1].nota;
 
   moverEjercicio("dia1", "v1", original[0].slot, 1); // intercambia posiciones 1 y 2
 
   const despues = bloque("dia1", "v1").ejercicios;
-  // Los textos de slot de las dos primeras posiciones no cambian...
-  assertEq(despues[0].slot, "dia1:v1:press-militar-barra");
-  assertEq(despues[1].slot, "dia1:v1:press-militar-barra#2");
-  // ...pero ahora identifican al ejercicio contrario: el sufijo lo decide
-  // la posición dentro del bloque, no cuál fila física era.
+  // Cambian de POSICIÓN (la que era segunda ahora se dibuja primero)...
   assertEq(despues[0].nota, notaSegundoAntes);
   assertEq(despues[1].nota, notaPrimeroAntes);
+  // ...pero cada una sigue siendo la misma fila de antes: su slot viaja
+  // con ella, no con el lugar que ocupa en el bloque.
+  assertEq(despues[0].slot, slotSegundoAntes);
+  assertEq(despues[1].slot, slotPrimeroAntes);
 
   restaurar("dia1", "v1", original);
 });

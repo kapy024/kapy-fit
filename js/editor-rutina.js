@@ -35,30 +35,70 @@ export function _reiniciarModoParaPruebas() {
   modoEdicion = false;
 }
 
-// --- recomputing slots within one block ---
+// --- slot identity within one block ---
 
-// Mirrors rutina.js's asignarSlots(), scoped to a single block instead of
-// the whole routine: the identity of a row is "<día>:<bloque>:<slug>", plus
-// an occurrence suffix ("#2") when the same slug repeats in the block. Not
-// exported from rutina.js (that file only ever runs it once, at load, over
-// the pristine RUTINA) — this is the same handful of lines, run again here
-// every time an edit could have changed a block's slug order or composition,
-// which is exactly when a repeated slug's suffix needs to move.
-function recalcularSlots(diaClave, bloqueClave, ejercicios) {
-  const ocurrencias = new Map();
-  for (const e of ejercicios) {
-    const n = (ocurrencias.get(e.slug) ?? 0) + 1;
-    ocurrencias.set(e.slug, n);
-    e.slot = `${diaClave}:${bloqueClave}:${e.slug}` + (n > 1 ? `#${n}` : "");
-  }
+// A row's slot — and with it, which saved registro (almacen.js) it points
+// at — is a STABLE identity assigned once (by rutina.js's asignarSlots()
+// for the pristine catalog, or by this file when a row is substituted into
+// something new below) and carried on the exercise object itself from then
+// on. It is never recomputed from the row's current array position, unlike
+// an earlier version of this file: recomputing an "#2" suffix by position
+// on every edit meant removing (or reordering past) an earlier occurrence
+// silently handed its slot — and with it, whatever registro was saved
+// under that slot — to a different row that never earned it (see C2 in the
+// final-review brief). quitarEjercicio() and moverEjercicio() below
+// therefore never touch `.slot` at all; only sustituirEjercicio() computes
+// a fresh one, via the two helpers below.
+
+// Splits a slot's own tail ("<slug>" or "<slug>#<n>") into {slug, n}. Only
+// ever called on a slot already scoped to the right día:bloque — the
+// caller decides that, this just reads the part that can repeat.
+function partesDeSlot(slot) {
+  const cola = slot.slice(slot.lastIndexOf(":") + 1);
+  const m = cola.match(/^(.*)#(\d+)$/);
+  return m ? { slug: m[1], n: Number(m[2]) } : { slug: cola, n: 1 };
+}
+
+function slotConOcurrencia(diaClave, bloqueClave, slug, n) {
+  return `${diaClave}:${bloqueClave}:${slug}` + (n > 1 ? `#${n}` : "");
+}
+
+// The next free occurrence number for `slug` among `ejercicios`' CURRENT
+// slots, ignoring the row at `indiceExcluido` (the one about to get a new
+// identity) — so a substitution never collides with a slug that already
+// has one or more rows elsewhere in the block, no matter what order they
+// happen to sit in.
+function siguienteOcurrencia(ejercicios, slug, indiceExcluido) {
+  let maxima = 0;
+  ejercicios.forEach((e, i) => {
+    if (i === indiceExcluido || typeof e.slot !== "string" || !e.slot) return;
+    const partes = partesDeSlot(e.slot);
+    if (partes.slug === slug) maxima = Math.max(maxima, partes.n);
+  });
+  return maxima + 1;
+}
+
+// Safety net for aplicarEdicionABloque(): fills in `.slot` only for a row
+// that doesn't already carry one (nothing in this app builds a list that
+// way today — every persisted record round-trips its own slot — but a
+// caller that hands in bare {slug, ...} records, e.g. a future import,
+// must not crash). Every row that already has a slot is left untouched.
+function completarSlotsFaltantes(diaClave, bloqueClave, ejercicios) {
+  ejercicios.forEach((e, i) => {
+    if (typeof e.slot === "string" && e.slot) return;
+    const n = siguienteOcurrencia(ejercicios, e.slug, i);
+    e.slot = slotConOcurrencia(diaClave, bloqueClave, e.slug, n);
+  });
 }
 
 // --- applying a block's edited list onto RUTINA (in memory only) ---
 
 // Replaces block (diaClave, bloqueClave)'s exercises with `listaEjercicios`
-// — plain {slug, series, reps, pesoKg, descanso, nota} records, position
-// implied by array order — and recomputes every slot in the block. Pure
-// in-memory mutation: no read or write of localStorage/network here, so
+// — plain {slug, series, reps, pesoKg, descanso, nota, slot} records,
+// position implied by array order — carrying each row's own `.slot`
+// through unchanged (see completarSlotsFaltantes() above for the one case
+// where it's missing). Pure in-memory mutation: no read or write of
+// localStorage/network here, so
 // tests can use it to set up a scenario, or restore RUTINA afterward,
 // without touching real storage. Returns false (no-op) if the block doesn't
 // exist — editing never creates one.
@@ -73,10 +113,14 @@ export function aplicarEdicionABloque(diaClave, bloqueClave, listaEjercicios) {
       reps: it.reps ?? null,
       pesoKg: it.pesoKg ?? null,
       descanso: it.descanso ?? null,
-      nota: it.nota ?? null
+      nota: it.nota ?? null,
+      // Carries the row's own slot through verbatim — it's already the
+      // correct stable identity, computed once when this row was created
+      // (see the comment above completarSlotsFaltantes()).
+      slot: typeof it.slot === "string" && it.slot ? it.slot : null
     });
   }
-  recalcularSlots(diaClave, bloqueClave, b.ejercicios);
+  completarSlotsFaltantes(diaClave, bloqueClave, b.ejercicios);
   return true;
 }
 
@@ -160,15 +204,19 @@ export function sustituirEjercicio(diaClave, bloqueClave, slot, nuevoSlug) {
   if (i === -1) return false;
   ejercicio(nuevoSlug); // valida que exista; lanza si no
   const anterior = b.ejercicios[i];
+  // Fresh identity for this row: the next occurrence number `nuevoSlug`
+  // doesn't already have elsewhere in the block, so it can never collide
+  // with — and steal history from — a row that already exists.
+  const n = siguienteOcurrencia(b.ejercicios, nuevoSlug, i);
   b.ejercicios[i] = {
     slug: nuevoSlug,
     series: anterior.series,
     reps: anterior.reps,
     pesoKg: null,
     descanso: anterior.descanso,
-    nota: null
+    nota: null,
+    slot: slotConOcurrencia(diaClave, bloqueClave, nuevoSlug, n)
   };
-  recalcularSlots(diaClave, bloqueClave, b.ejercicios);
   return persistirBloque(diaClave, bloqueClave);
 }
 
@@ -177,26 +225,28 @@ export function sustituirEjercicio(diaClave, bloqueClave, slot, nuevoSlug) {
 // the server's exercise_logs has no foreign key into routine_exercises at
 // all — see sync.js's enviarEdicionBloque) — it simply stops showing up as
 // part of the active plan, exactly like a day-1 exercise that's still in
-// RUTINA's dia7 (rest) shows nothing either. Every remaining exercise in the
-// block shifts up one position; a repeated slug's occurrence suffix is
-// recalculated to match.
+// RUTINA's dia7 (rest) shows nothing either. Every remaining exercise keeps
+// its OWN slot exactly as it was: removing an earlier occurrence of the
+// same slug never renumbers a later one, so that row's registro (and its
+// checkbox/prefilled fields, both read by slot — see registro.js) never
+// gets handed to a different physical row than the one it was actually
+// saved for.
 export function quitarEjercicio(diaClave, bloqueClave, slot) {
   const b = bloque(diaClave, bloqueClave);
   if (!b) return false;
   const i = b.ejercicios.findIndex((x) => x.slot === slot);
   if (i === -1) return false;
   b.ejercicios.splice(i, 1);
-  recalcularSlots(diaClave, bloqueClave, b.ejercicios);
   return persistirBloque(diaClave, bloqueClave);
 }
 
 // Moves the exercise at `slot` one position toward `direccion` (-1 = up,
-// +1 = down) within its block. A slot never depends on position — so most
-// reorders change nothing about it — EXCEPT the occurrence suffix of a
-// repeated slug, which genuinely is position-derived (see rutina.js's own
-// asignarSlots): swapping día 1's two "press militar" entries moves which
-// physical row is "#1" and which is "#2". Returns false, doing nothing, at
-// either end of the list — there's nowhere to move to.
+// +1 = down) within its block. Never touches `.slot`: a row's identity —
+// and the registro it points at — travels WITH it, not with whatever
+// position it lands on, so swapping día 1's two "press militar" entries
+// swaps which one is drawn first without swapping which one is which.
+// Returns false, doing nothing, at either end of the list — there's
+// nowhere to move to.
 export function moverEjercicio(diaClave, bloqueClave, slot, direccion) {
   const b = bloque(diaClave, bloqueClave);
   if (!b) return false;
@@ -207,7 +257,6 @@ export function moverEjercicio(diaClave, bloqueClave, slot, direccion) {
   const tmp = b.ejercicios[i];
   b.ejercicios[i] = b.ejercicios[j];
   b.ejercicios[j] = tmp;
-  recalcularSlots(diaClave, bloqueClave, b.ejercicios);
   return persistirBloque(diaClave, bloqueClave);
 }
 
