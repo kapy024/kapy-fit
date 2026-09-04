@@ -38,7 +38,7 @@ navegador). En vez de escribir una ruta de inserción a la medida, se usa un
 Supabase ya genera para `routine_days`/`routine_blocks`/`routine_exercises`
 (lectura) y `exercise_logs` (escritura):
 
-- **Tabla nueva** `device_tokens` (migración `sql/007_device_tokens.sql`):
+- **Tabla nueva** `device_tokens` (migración `sql/008_device_tokens.sql`):
   `id`, `user_id`, `token` (aleatorio, generado una vez a mano), `label`
   (p. ej. `"Venu 2"`), `revoked_at`. RLS la deja cerrada a cualquier cliente
   — solo la toca la Edge Function, con `service_role`.

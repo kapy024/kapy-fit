@@ -23,7 +23,7 @@
 ## Task 1: Migración `device_tokens`
 
 **Files:**
-- Create: `sql/007_device_tokens.sql`
+- Create: `sql/008_device_tokens.sql`
 
 **Interfaces:**
 - Produces: tabla `device_tokens(id uuid, user_id uuid, token text unique, label text, revoked_at timestamptz null, creado_en timestamptz)`, cerrada por RLS a cualquier rol de cliente — solo la Edge Function del Task 2 (con `service_role`, que ignora RLS) la lee/escribe.
@@ -58,7 +58,7 @@ alter table device_tokens enable row level security;
 
 - [ ] **Step 2: Aplicarla en el editor SQL de Supabase**
 
-Pegar el contenido de `sql/007_device_tokens.sql` en el editor SQL del
+Pegar el contenido de `sql/008_device_tokens.sql` en el editor SQL del
 proyecto (mismo flujo que `sql/001`–`006`, documentado en `sql/README.md`)
 y ejecutarlo. Esto **solo lo puede hacer Juan Manuel** — el agente no tiene
 acceso al dashboard de Supabase.
@@ -98,7 +98,7 @@ compilar dentro del reloj. **No se commitea.**
 - [ ] **Step 4: Commit**
 
 ```bash
-git add sql/007_device_tokens.sql
+git add sql/008_device_tokens.sql
 git commit -m "Tabla device_tokens para autenticar el reloj sin magic link"
 ```
 
@@ -148,7 +148,7 @@ supabase link --project-ref oakahiwejhzsxccrscmk
 ```typescript
 // supabase/functions/device-token-exchange/index.ts
 //
-// Intercambia un device_token (Task 1, sql/007_device_tokens.sql) por un
+// Intercambia un device_token (Task 1, sql/008_device_tokens.sql) por un
 // JWT de Supabase de corta duración (1h), firmado con el mismo JWT secret
 // que usa el resto del proyecto. De ahí en adelante el reloj habla
 // directo con PostgREST — ver docs/superpowers/specs/2026-09-03-connect-iq-venu2-design.md §3.
@@ -393,7 +393,7 @@ solo existe un `.example` con el formato.
 // connect-iq/venu2/source/Secrets.mc.example
 //
 // Copiar a Secrets.mc (gitignorado, igual que config.local.js en la web) y
-// pegar el token generado en sql/007_device_tokens.sql Task 1, Step 3.
+// pegar el token generado en sql/008_device_tokens.sql Task 1, Step 3.
 // Nunca commitear Secrets.mc: cualquiera con ese valor puede pedir un JWT
 // de 1h para tu cuenta hasta que borres la fila en device_tokens.
 module Secrets {
