@@ -33,7 +33,7 @@ class HierroVenuApp extends Application.AppBase {
     }
 
     function onDiasIniciales(dias) {
-        if (dias == null) {
+        if (dias == null || dias.size() == 0) {
             return;
         }
         var ultimoDiaClave = Toybox.Application.Storage.getValue("ultimo_dia_clave");
