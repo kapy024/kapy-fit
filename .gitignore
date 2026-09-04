@@ -3,6 +3,9 @@
 # versiona: es pública por diseño y RLS (sql/002_rls.sql) es lo que protege.
 # La service_role key nunca entra al repo.
 config.local.js
+# Device token para Venu 2. Generado en Task 1, Step 3 (Supabase). Compilado
+# en el binario; nunca commitear (permite solicitar JWT de 1h para la cuenta).
+connect-iq/venu2/source/Secrets.mc
 .superpowers/
 .claude/
 .claude-flow/
