@@ -48,7 +48,7 @@ class ExerciseLogDelegate extends WatchUi.BehaviorDelegate {
             if (delta != 0) { _view.ajustarSeries(delta); WatchUi.requestUpdate(); }
             return true;
         }
-        if (enFila(y, h, 0.78)) {
+        if (enFila(y, h, 0.72)) {
             if (delta != 0) { _view.ajustarReps(delta); WatchUi.requestUpdate(); }
             return true;
         }
@@ -59,9 +59,12 @@ class ExerciseLogDelegate extends WatchUi.BehaviorDelegate {
         return false;
     }
 
+    // Tolerancia +-30px (antes +-40): con la fila de Reps en 0.72 y
+    // "Guardar" desde 0.85, +-40 alcanzaba a solapar ambas zonas en la
+    // pantalla real del Venu 2 (416px) — hallazgo de revisión del Task 14.
     function enFila(y, h, fraccion) {
         var centro = h * fraccion;
-        return y > (centro - 40) && y < (centro + 40);
+        return y > (centro - 30) && y < (centro + 30);
     }
 
     // Botón físico arriba/abajo (o swipe vertical en pantalla táctil):

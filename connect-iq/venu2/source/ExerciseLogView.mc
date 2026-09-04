@@ -76,7 +76,7 @@ class ExerciseLogView extends WatchUi.View {
         dc.drawText(w / 2, h * 0.06, Graphics.FONT_SMALL, nombre, Graphics.TEXT_JUSTIFY_CENTER);
         dibujarFila(dc, w, h * 0.30, "Peso (kg)", _pesoKg.format("%.2f"));
         dibujarFila(dc, w, h * 0.55, "Series", _series.toString());
-        dibujarFila(dc, w, h * 0.78, "Reps", _reps.toString());
+        dibujarFila(dc, w, h * 0.72, "Reps", _reps.toString());
         dc.drawText(w / 2, h * 0.92, Graphics.FONT_SMALL, "Guardar", Graphics.TEXT_JUSTIFY_CENTER);
     }
 
