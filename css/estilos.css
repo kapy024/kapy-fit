@@ -754,3 +754,38 @@
     padding:5px 8px;
     border-bottom:1px solid var(--border);
   }
+
+  /* --- gráfica de peso corporal (tarea 5): reusa .grafica-lienzo/
+     .grafica-vacia/.grafica-nota de arriba; esto es lo que le falta. --- */
+  .grafica-peso table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:12.5px;
+    font-variant-numeric:tabular-nums;
+  }
+  .grafica-peso caption{
+    text-align:left;
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--text-dim);
+    padding-bottom:6px;
+  }
+  .grafica-peso th, .grafica-peso td{
+    text-align:left;
+    padding:5px 8px;
+    border-bottom:1px solid var(--border);
+  }
+  .peso-captura{
+    display:flex;
+    align-items:flex-end;
+    flex-wrap:wrap;
+    gap:10px 14px;
+    margin-bottom:16px;
+  }
+  .vista-toggle{
+    display:flex;
+    gap:8px;
+    margin-bottom:12px;
+  }
