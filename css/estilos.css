@@ -693,3 +693,64 @@
     /* Same iOS zoom-on-focus reasoning as the base .f-input rule. */
     select.f-sel{font-size:16px}
   }
+
+  /* --- gráficas (entrega 3) --- */
+  .grafica-ejercicio{
+    display:flex;
+    flex-direction:column;
+    gap:22px;
+  }
+  .grafica-bloque{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:14px 16px 16px;
+  }
+  .grafica-titulo{
+    font-size:14px;
+    margin:0 0 10px;
+    font-weight:600;
+  }
+  .grafica-lienzo{
+    position:relative;
+    height:220px;
+    margin-bottom:14px;
+  }
+  .grafica-lienzo canvas{
+    width:100% !important;
+    height:100% !important;
+  }
+  .grafica-vacia{
+    background:var(--surface-2);
+    border-radius:8px;
+    padding:14px 16px;
+    font-size:13px;
+    color:var(--text-dim);
+    font-style:italic;
+  }
+  .grafica-nota{
+    font-size:12px;
+    color:var(--text-dim);
+    font-style:italic;
+    margin:0 0 12px;
+  }
+  .grafica-bloque table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:12.5px;
+    font-variant-numeric:tabular-nums;
+  }
+  .grafica-bloque caption{
+    text-align:left;
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--text-dim);
+    padding-bottom:6px;
+  }
+  .grafica-bloque th, .grafica-bloque td{
+    text-align:left;
+    padding:5px 8px;
+    border-bottom:1px solid var(--border);
+  }
