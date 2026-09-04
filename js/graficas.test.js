@@ -5,8 +5,20 @@
 // "red real" — es el mismo punto de sustitución que ya se usa para el
 // mismo problema en db.js.
 import { test, assertEq } from "./pruebas.js";
-import { cargarChart, disponible, paleta, _fijarUrlChartParaPruebas } from "./graficas.js";
+import {
+  cargarChart, disponible, paleta, _fijarUrlChartParaPruebas,
+  registrarGrafica, destruirGrafica, detenerTodasLasGraficas, _contarGraficasActivasParaPruebas
+} from "./graficas.js";
 import { montarTabla } from "./tabla-datos.js";
+
+// Doble mínimo de un Chart.js real: lo único que este registro le pide a
+// una "gráfica" es un método destroy() — nunca se toca Chart.js de verdad
+// aquí (nada de red), así que estas pruebas cubren la lógica del registro
+// en sí misma, independiente de si Chart.js llegó a cargar.
+function graficaFalsa() {
+  let destruida = false;
+  return { get destruida() { return destruida; }, destroy() { destruida = true; } };
+}
 
 test("cargarChart() no lanza y devuelve null cuando el import() falla", async () => {
   _fijarUrlChartParaPruebas("https://cdn-que-no-existe.invalid/chart.js");
@@ -37,6 +49,58 @@ test("disponible() responde false cuando la carga falló", async () => {
   await cargarChart();
   assertEq(disponible(), false);
   _fijarUrlChartParaPruebas();
+});
+
+// --- registro de instancias vivas (I3, revisión final de rama) ---
+
+test("registrarGrafica() cuenta la instancia; destruirGrafica() la destruye y la descuenta", () => {
+  const antes = _contarGraficasActivasParaPruebas();
+  const g = graficaFalsa();
+  assertEq(registrarGrafica(g), g, "registrarGrafica devuelve la misma instancia, para encadenar");
+  assertEq(_contarGraficasActivasParaPruebas(), antes + 1);
+
+  destruirGrafica(g);
+  assertEq(g.destruida, true, "destruirGrafica() debe llamar a destroy()");
+  assertEq(_contarGraficasActivasParaPruebas(), antes, "y descontarla del registro");
+});
+
+test("destruirGrafica(null) no truena — el primer dibujar() de un componente no tiene nada que reemplazar", () => {
+  let lanzo = false;
+  try { destruirGrafica(null); destruirGrafica(undefined); } catch (_e) { lanzo = true; }
+  assertEq(lanzo, false);
+});
+
+test("detenerTodasLasGraficas() destruye y descuenta TODAS las registradas, sin dejar ninguna atrás", () => {
+  const antes = _contarGraficasActivasParaPruebas();
+  const g1 = registrarGrafica(graficaFalsa());
+  const g2 = registrarGrafica(graficaFalsa());
+  const g3 = registrarGrafica(graficaFalsa());
+  assertEq(_contarGraficasActivasParaPruebas(), antes + 3);
+
+  detenerTodasLasGraficas();
+
+  assertEq([g1, g2, g3].every((g) => g.destruida), true);
+  assertEq(_contarGraficasActivasParaPruebas(), 0, "el registro global queda vacío, no solo descontado");
+});
+
+// El defecto exacto de I3: un componente que redibuja su propia gráfica en
+// el mismo contenedor (grafica-peso.js's toggle Último mes/Todo el
+// histórico, o cada peso nuevo guardado) debe destruir la instancia
+// anterior antes de crear la siguiente — nunca simplemente innerHTML = ""
+// sobre el canvas y dejar la instancia vieja viva. Simula exactamente ese
+// patrón con dobles: 5 "redibujados" deben dejar 1 instancia activa, no 5.
+test("un patrón de redibujado en el mismo componente (destruir la anterior antes de crear la siguiente) nunca acumula instancias", () => {
+  const antes = _contarGraficasActivasParaPruebas();
+  let actual = null;
+  function redibujar() {
+    destruirGrafica(actual); // lo que grafica-peso.js hace ahora al inicio de dibujar()
+    actual = registrarGrafica(graficaFalsa());
+  }
+  for (let i = 0; i < 5; i++) redibujar();
+
+  assertEq(_contarGraficasActivasParaPruebas(), antes + 1, "cinco redibujados, una sola instancia viva — no cinco");
+  destruirGrafica(actual);
+  assertEq(_contarGraficasActivasParaPruebas(), antes);
 });
 
 test("cargarChart() carga la librería real y disponible() pasa a true", async () => {

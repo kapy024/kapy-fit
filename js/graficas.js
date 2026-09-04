@@ -38,6 +38,54 @@ export function disponible() {
   return cargado !== null;
 }
 
+// --- registro de instancias vivas (ver I3 de la revisión final) ---
+//
+// Every live Chart.js instance grafica-peso.js/grafica-ejercicio.js create,
+// so whoever is about to discard the DOM subtree holding their canvases —
+// render.js switching tabs, or one of those files redrawing its own chart
+// in place — can destroy() it first. Chart.js registers its own
+// ResizeObserver and other global listeners on construction; removing its
+// canvas from the DOM with plain innerHTML = "" (as every repaint here
+// does) leaves those listeners, and the chart object itself, alive
+// forever — the same family of leak as the .ics data-URI blobs and the
+// per-image IntersectionObservers this app already fixed (js/imagenes.js's
+// detenerTodasLasImagenes()).
+const graficasActivas = new Set();
+
+// Tracks one newly-created chart. Returns it unchanged so a caller can
+// write `chartActual = registrarGrafica(new Chart(...))` inline.
+export function registrarGrafica(chart) {
+  graficasActivas.add(chart);
+  return chart;
+}
+
+// Destroys and untracks ONE chart — used by a component redrawing its own
+// chart in place (grafica-peso.js's view toggle, a fresh weigh-in) to
+// retire the instance it's about to replace, without touching any other
+// chart that happens to be open elsewhere. Safe to call with null/undefined
+// (nothing mounted yet) or with a chart already destroyed.
+export function destruirGrafica(chart) {
+  if (!chart) return;
+  graficasActivas.delete(chart);
+  chart.destroy();
+}
+
+// Destroys and untracks EVERY live chart — for a caller about to discard a
+// whole subtree that may hold more than one (render.js, leaving or
+// re-entering the Progreso tab, where each expanded exercise row keeps its
+// own chart alive until the tab itself is left).
+export function detenerTodasLasGraficas() {
+  for (const chart of graficasActivas) chart.destroy();
+  graficasActivas.clear();
+}
+
+// Test-only seam: how many charts this module is currently tracking, so
+// graficas.test.js can prove destruirGrafica()/detenerTodasLasGraficas()
+// actually shrink the count instead of just trusting Chart.js internals.
+export function _contarGraficasActivasParaPruebas() {
+  return graficasActivas.size;
+}
+
 // Reads one CSS custom property off :root, trimmed — getPropertyValue
 // returns the raw declaration text, which browsers pad with a leading
 // space that a Chart.js color option should never carry.

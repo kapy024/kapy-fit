@@ -7,7 +7,7 @@
 import { historial } from "./almacen.js";
 import { desdeKg } from "./unidades.js";
 import { volumen, serieTemporal } from "./metricas.js";
-import { cargarChart, paleta, opcionesBase } from "./graficas.js";
+import { cargarChart, paleta, opcionesBase, registrarGrafica } from "./graficas.js";
 import { montarTabla } from "./tabla-datos.js";
 import { etiquetaSlot } from "./rutina.js";
 
@@ -193,12 +193,19 @@ async function dibujarBloque(contenedorPadre, { titulo, series, columnaValor }) 
     const canvas = document.createElement("canvas");
     lienzo.appendChild(canvas);
     bloque.appendChild(lienzo);
-    new Chart(canvas, {
+    // Registered globally, never destroyed locally: unlike grafica-peso.js's
+    // toggle, this component never redraws its own chart in place — the
+    // only two ways this instance ever needs retiring are progreso.js
+    // discarding this whole row (never happens today: a row keeps its chart
+    // once opened) or render.js leaving the Progreso tab entirely, which is
+    // exactly what detenerTodasLasGraficas() there is for (see I3,
+    // final-review brief).
+    registrarGrafica(new Chart(canvas, {
       type: "line",
       data: { datasets: series.map((s) => dataset(s.puntos, s.color, s.etiqueta)) },
       options: opcionesLinea(conLeyenda),
       plugins: [pluginCrosshair()]
-    });
+    }));
   } else {
     const nota = document.createElement("p");
     nota.className = "grafica-nota";

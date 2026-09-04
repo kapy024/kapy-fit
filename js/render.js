@@ -14,6 +14,7 @@ import {
   contarCompletados, reiniciarCompletadosDeHoy
 } from "./registro.js";
 import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
+import { detenerTodasLasGraficas } from "./graficas.js";
 import {
   modoEdicionActivo, pintarBotonModoEdicion, pintarFilaEdicion
 } from "./editor-rutina.js";
@@ -86,6 +87,14 @@ export function pintarPanelActivo(contenedor, claveActiva, unidad, alReiniciar) 
   if (claveActiva === CLAVE_PROGRESO) {
     clearAllTimers();
     detenerTodasLasImagenes();
+    // Re-entering Progreso after having left it (or reopening it fresh)
+    // must retire whatever Chart.js instances the PREVIOUS Progreso mount
+    // left running — each expanded exercise row keeps its own chart alive
+    // for as long as that mount lives (see progreso.js's `montado` guard),
+    // and montarProgreso()'s own innerHTML = "" only detaches their
+    // canvases, it doesn't stop Chart.js's listeners on them (I3, final-
+    // review brief — same leak family as the timers/images above).
+    detenerTodasLasGraficas();
     montarProgreso(contenedor, unidad);
     return;
   }
@@ -105,6 +114,13 @@ export function pintarDia(contenedor, claveDia, unidad, alReiniciar) {
   // it's disconnected first.
   clearAllTimers();
   detenerTodasLasImagenes();
+  // Leaving Progreso FOR a day tab is the other direction of the same leak
+  // pintarPanelActivo()'s own detenerTodasLasGraficas() call guards against
+  // — a day panel never creates a chart itself, so this is a no-op on a
+  // day-to-day repaint, but it's what actually retires Progreso's charts
+  // when this function (not montarProgreso) is the one about to overwrite
+  // their container.
+  detenerTodasLasGraficas();
   // The variant selector rebuilds through this same function (see
   // `repintar` below) — a chip click leaves focus on a `.chip-btn` that
   // innerHTML = "" is about to destroy, same problem pintarNav has with the

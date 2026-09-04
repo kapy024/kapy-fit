@@ -7,7 +7,7 @@ import { pesos, guardarPeso } from "./peso-corporal.js";
 import { hoyISO } from "./almacen.js";
 import { aKg, desdeKg } from "./unidades.js";
 import { promedioMovil, porSemana, semanaIsoDe } from "./metricas.js";
-import { cargarChart, paleta, opcionesBase } from "./graficas.js";
+import { cargarChart, paleta, opcionesBase, registrarGrafica, destruirGrafica } from "./graficas.js";
 import { montarTabla } from "./tabla-datos.js";
 import { fechaAMs, formatearFechaCorta, pluginCrosshair } from "./grafica-ejercicio.js";
 
@@ -236,8 +236,16 @@ export async function montarGraficaPeso(contenedor, unidad) {
 
   let vista = "mes";
   const cuerpo = document.createElement("div");
+  // The one Chart.js instance this component keeps alive at a time — a
+  // view-toggle click or a fresh weigh-in calls dibujar() again on the same
+  // `cuerpo`, and cuerpo.innerHTML = "" below only detaches the old
+  // canvas, it doesn't stop Chart.js's own listeners on it (see I3, final-
+  // review brief: 14 live instances behind 3 canvases after 5 toggle taps).
+  let chartActual = null;
 
   async function dibujar() {
+    destruirGrafica(chartActual);
+    chartActual = null;
     cuerpo.innerHTML = "";
     const datos = datosDePeso(unidad, VENTANA_PROMEDIO);
 
@@ -262,12 +270,12 @@ export async function montarGraficaPeso(contenedor, unidad) {
       const canvas = document.createElement("canvas");
       lienzo.appendChild(canvas);
       cuerpo.appendChild(lienzo);
-      new Chart(canvas, {
+      chartActual = registrarGrafica(new Chart(canvas, {
         type: "line",
         data: { datasets: [datasetDatos(puntos, p.serie1), datasetPromedio(promedio, p.serie1)] },
         options: opcionesDoble(),
         plugins: [pluginCrosshair(), pluginEtiquetaDirecta()]
-      });
+      }));
     } else {
       const nota = document.createElement("p");
       nota.className = "grafica-nota";
