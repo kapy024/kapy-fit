@@ -1,28 +1,49 @@
-import Toybox.Application;
-import Toybox.Lang;
-import Toybox.WatchUi;
+using Toybox.Application;
+using Toybox.WatchUi;
 
 class HierroVenuApp extends Application.AppBase {
+    var _jwtInicial;
 
     function initialize() {
         AppBase.initialize();
     }
 
-    // onStart() is called on application start up
-    function onStart(state as Dictionary?) as Void {
+    function getInitialView() {
+        return [new LoadingView()];
     }
 
-    // onStop() is called when your application is exiting
-    function onStop(state as Dictionary?) as Void {
+    function onStart(state) {
+        SyncService.iniciar();
+        DeviceAuth.getValidJwt(method(:onJwtInicial));
     }
 
-    // Return the initial view of your application here
-    function getInitialView() as [Views] or [Views, InputDelegates] {
-        return [ new HierroVenuView(), new HierroVenuDelegate() ];
+    function onJwtInicial(jwt) {
+        if (jwt == null) {
+            return; // sin conexión al abrir: SyncService (ya iniciado) reintenta solo
+        }
+        _jwtInicial = jwt;
+        RoutineClient.fetchRoutineId(jwt, method(:onRoutineIdInicial));
     }
 
-}
+    function onRoutineIdInicial(routineId) {
+        if (routineId == null) {
+            return;
+        }
+        RoutineClient.fetchDays(_jwtInicial, routineId, method(:onDiasIniciales));
+    }
 
-function getApp() as HierroVenuApp {
-    return Application.getApp() as HierroVenuApp;
+    function onDiasIniciales(dias) {
+        if (dias == null) {
+            return;
+        }
+        var ultimoDiaClave = Toybox.Application.Storage.getValue("ultimo_dia_clave");
+        WatchUi.switchToView(
+            new DaySelectView(dias, ultimoDiaClave),
+            new DaySelectDelegate(_jwtInicial),
+            WatchUi.SLIDE_IMMEDIATE
+        );
+    }
+
+    function onStop(state) {
+    }
 }
