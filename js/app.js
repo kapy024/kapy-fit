@@ -133,6 +133,52 @@ function pintarAvisoMigracion() {
   else pintarBanner();
 }
 
+// Offer to upload the local history that piled up before the user ever
+// signed in. Same "aviso" visual pattern and spot as pintarAvisoMigracion()
+// above — sync.js's arrancarAutosync() calls this (via alOfrecerAdopcion,
+// wired below) exactly once, the moment a brand-new sign-in shows up with
+// unresolved history still queued (see debeOfrecerAdopcion()). Shows the
+// count before doing anything, same as migración's aviso, because that
+// count is the whole point: it's what makes "nunca subas nada sin
+// preguntar" concrete instead of a slogan. Never offered again afterward,
+// whichever button gets tapped — no reopen link, unlike the migración
+// aviso: once answered, this one is done for good.
+function pintarAvisoAdopcion({ historialSinAdoptar, aceptarAdopcion, rechazarAdopcion }) {
+  const wrap = document.querySelector(".wrap");
+  const antesDe = document.getElementById("dayNav");
+  const cantidad = historialSinAdoptar().length;
+
+  const aviso = document.createElement("div");
+  aviso.className = "aviso";
+  aviso.innerHTML =
+    `<p>Encontré <strong>${cantidad}</strong> ${plural(cantidad, "registro", "registros")} guardados en este dispositivo de antes de iniciar sesión. No se suben solos.</p>`;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "cal-btn";
+  btn.textContent = `Subir ${cantidad} ${plural(cantidad, "registro", "registros")}`;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Subiendo…";
+    const r = await aceptarAdopcion();
+    aviso.textContent = r.fallidos > 0
+      ? `Subí ${r.enviados} de ${cantidad}; el resto se sube solo en cuanto haya conexión.`
+      : `Listo: ${r.enviados} ${plural(r.enviados, "registro subido", "registros subidos")}.`;
+  });
+
+  const btnOmitir = document.createElement("button");
+  btnOmitir.type = "button";
+  btnOmitir.className = "reset-btn";
+  btnOmitir.textContent = "Ahora no";
+  btnOmitir.addEventListener("click", () => {
+    rechazarAdopcion();
+    aviso.remove();
+  });
+
+  aviso.append(btn, btnOmitir);
+  wrap.insertBefore(aviso, antesDe);
+}
+
 pintarAvisoMigracion();
 pintarUltimoReinicio();
 refrescar();
@@ -156,5 +202,9 @@ import("./sesion-ui.js")
 // that must never take anything down here — it only means the pending
 // queue waits for the next successful attempt, exactly as designed.
 import("./sync.js")
-  .then(({ arrancarAutosync }) => arrancarAutosync())
+  .then(({ arrancarAutosync, historialSinAdoptar, aceptarAdopcion, rechazarAdopcion }) => {
+    arrancarAutosync(undefined, () => {
+      pintarAvisoAdopcion({ historialSinAdoptar, aceptarAdopcion, rechazarAdopcion });
+    });
+  })
   .catch(() => {});

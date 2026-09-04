@@ -6,7 +6,10 @@
 // Every network dependency is injected (see DEPENDENCIAS_REALES below),
 // the same seam sesion-ui.js uses for auth.js/db.js — sync.test.js passes
 // a double instead, so these tests never touch the real network.
-import { pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto } from "./almacen.js";
+import {
+  pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto,
+  adopcionResuelta, marcarAdopcionResuelta
+} from "./almacen.js";
 import { cliente, hayConfig } from "./db.js";
 import { sesionActual, alCambiarSesion } from "./auth.js";
 
@@ -280,6 +283,46 @@ export async function descargar(deps = DEPENDENCIAS_REALES) {
   return { traidos, detalle: "ok" };
 }
 
+// --- adopción del historial local sin sesión ---
+
+// Every queued "registro" write is history this device recorded without
+// ever having a session: guardarRegistro() enqueues on every save
+// regardless of session (see almacen.js), and with no session sincronizar()
+// has never been able to drain the queue — so whatever "registro" entries
+// are still pending the first time a session shows up is exactly what
+// needs offering. "preferencias" pendientes never count here: a unit
+// preference isn't training history, and it isn't what the user is
+// worried about handing over.
+export function historialSinAdoptar() {
+  return pendientes().filter((p) => p.tipo === "registro");
+}
+
+// True only when the offer genuinely applies: it hasn't been answered
+// before (accepted or declined — see almacen.js's adopcionResuelta()), and
+// there's still local history sitting unsent to offer.
+export function debeOfrecerAdopcion() {
+  return !adopcionResuelta() && historialSinAdoptar().length > 0;
+}
+
+// Accept: the history is already sitting in the normal queue (guardarRegistro()
+// put it there when it was written, session or not) — accepting never opens
+// a parallel upload path, it only marks the question answered and lets
+// sincronizar() drain the queue right now instead of waiting for the next
+// automatic pass. Every row still goes up through subir_registro_ejercicio
+// (see enviarOperacion above), so it inherits the same conditional write
+// and retry as any other pendiente.
+export async function aceptarAdopcion(deps = DEPENDENCIAS_REALES) {
+  marcarAdopcionResuelta();
+  return sincronizar(deps);
+}
+
+// Decline: enqueues nothing new and deletes nothing local — the history
+// stays exactly as it was, only on this device. This only records that the
+// question has been answered, so it stops being offered.
+export function rechazarAdopcion() {
+  marcarAdopcionResuelta();
+}
+
 // --- arranque automático ---
 
 let temporizador = null;
@@ -294,12 +337,26 @@ let temporizador = null;
 // function that undoes all of it — tests must call it to avoid a stray
 // interval calling a fake client after the test that created it has
 // finished.
-export function arrancarAutosync(deps = DEPENDENCIAS_REALES) {
+//
+// `alOfrecerAdopcion`, if given, is called instead of sincronizar() the
+// moment a brand-new sign-in shows up with unresolved local history still
+// queued (see debeOfrecerAdopcion()) — that history must never go up
+// silently just because a session appeared. descargar() still runs in that
+// case: it never uploads anything, and its own rule 1 never overwrites a
+// record that's still in the upload queue, so pulling the account's
+// existing data down is always safe even before the offer is answered.
+export function arrancarAutosync(deps = DEPENDENCIAS_REALES, alOfrecerAdopcion) {
   const manejarOnline = () => { sincronizar(deps); };
   window.addEventListener("online", manejarOnline);
 
   const desuscribirSesion = deps.alCambiarSesion((sesion) => {
-    if (sesion) sincronizar(deps).then(() => descargar(deps));
+    if (!sesion) return;
+    if (debeOfrecerAdopcion()) {
+      descargar(deps);
+      if (typeof alOfrecerAdopcion === "function") alOfrecerAdopcion();
+      return;
+    }
+    sincronizar(deps).then(() => descargar(deps));
   });
 
   if (temporizador) clearInterval(temporizador);

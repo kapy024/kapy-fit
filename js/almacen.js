@@ -17,6 +17,11 @@ export const LLAVE_PREFS = "hierro3:prefs";
 // or explicitly dismissed), so app.js stops re-offering it on every load —
 // its own key, separate from prefs/registros, since it isn't a preference.
 export const LLAVE_MIGRACION = "hierro3:migracion";
+// Whether the "upload local history to this account" banner has already
+// been resolved (accepted or declined) — same reasoning as LLAVE_MIGRACION:
+// its own key, so app.js stops re-offering it once the user has answered,
+// independently of anything else stored.
+export const LLAVE_ADOPCION = "hierro3:adopcion";
 // When the "Reiniciar" button on a day's panel was last used. Purely
 // informational (the #lastReset footer note in index.html) — never read to
 // decide what to clear, so a corrupted or missing value can't affect a
@@ -254,6 +259,20 @@ export function migracionResuelta() {
 // contract as every other write here.
 export function marcarMigracionResuelta() {
   return escribirJSON(LLAVE_MIGRACION, true);
+}
+
+// Whether the local-history adoption banner has already been resolved —
+// either the user accepted uploading it, or explicitly declined. Defaults
+// to false (never resolved) so a fresh sign-in still offers it once.
+export function adopcionResuelta() {
+  return leerJSON(LLAVE_ADOPCION, false) === true;
+}
+
+// Marks the adoption banner as resolved so app.js stops offering it by
+// default. Returns true if persisted, false if storage refused it — same
+// contract as every other write here.
+export function marcarAdopcionResuelta() {
+  return escribirJSON(LLAVE_ADOPCION, true);
 }
 
 // Returns the ISO timestamp of the last confirmed "Reiniciar" tap, or null
