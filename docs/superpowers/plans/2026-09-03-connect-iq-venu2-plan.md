@@ -1118,13 +1118,30 @@ Expected: `Cannot find symbol ':DeviceAuth'`.
 
 - [ ] **Step 3: Implementación**
 
+`method(:x)` solo resuelve dentro de una `class` (necesita un `self` al que
+enlazarse) — **no** funciona en una función suelta de `module` (confirmado
+compilando: `Cannot find symbol ':method' on type 'self'`; el propio SDK lo
+confirma también — todo uso de `method(:...)` en sus samples vive dentro de
+una `class`, nunca en una función de `module` a secas, ver p. ej.
+`samples/Encryption/source/AntModule.mc`, clase `AntSensor` anidada en el
+`module AntModule`). Por eso `DeviceAuth` (y de aquí en adelante todo módulo
+de este plan que necesite pasarse su propio callback) se parte en dos: una
+`class DeviceAuthImpl` de verdad (con `self`, ahí sí sirve `method(:x)`) y
+un `module DeviceAuth` delgado que delega a una única instancia — así el
+resto del plan sigue llamando `DeviceAuth.getValidJwt(...)` exactamente
+igual, sin que ningún otro task se entere del cambio interno.
+
 ```javascript
 // connect-iq/venu2/source/DeviceAuth.mc
 //
 // Cachea el JWT de 1h que da device-token-exchange (Task 2) en Storage, y
 // lo renueva antes de que caduque. El reloj nunca ve el JWT secret ni la
 // service_role key (spec §3) — solo Secrets.DEVICE_TOKEN y este JWT corto.
-module DeviceAuth {
+//
+// class + module delgado (no un module a secas): method(:onRespuestaDeIntercambio)
+// necesita un `self` de verdad al que enlazarse, y un module suelto no lo
+// tiene. Ver nota arriba de este Step.
+class DeviceAuthImpl {
     const JWT_KEY = "auth_jwt";
     const EXP_KEY = "auth_jwt_exp";
     const MARGIN_SECONDS = 60;
@@ -1206,19 +1223,50 @@ module DeviceAuth {
         invalidar();
     }
 }
+
+// Envoltorio delgado: una sola instancia de DeviceAuthImpl, expuesta con la
+// misma sintaxis DeviceAuth.x(...) que usa el resto del plan (Tasks 10, 11,
+// 16) — nadie fuera de este archivo necesita saber que por dentro es una
+// clase, no un module a secas.
+module DeviceAuth {
+    var _impl = new DeviceAuthImpl();
+
+    function getValidJwt(onListo) {
+        _impl.getValidJwt(onListo);
+    }
+
+    function expirado(exp, ahora) {
+        return _impl.expirado(exp, ahora);
+    }
+
+    function interpretarRespuesta(responseCode, data) {
+        return _impl.interpretarRespuesta(responseCode, data);
+    }
+
+    function invalidar() {
+        _impl.invalidar();
+    }
+
+    function _reiniciarParaPruebas() {
+        _impl._reiniciarParaPruebas();
+    }
+}
 ```
 
 - [ ] **Step 4: Correr las pruebas puras y verlas pasar**
 
 ```bash
 monkeyc -w -t -y ../developer_key.der -o bin/Test.prg -f monkey.jungle -d venu2
-monkeydo bin/Test.prg venu2 /t
+monkeydo bin/Test.prg venu2 -t
 ```
 
-Expected: `Ran 6 tests` / `PASSED` (ver nota macOS del Task 5, Step 4). Este
-compilazo también confirma que `method(:onRespuestaDeIntercambio)` es
-válido a nivel de módulo — si no lo fuera, `monkeyc` fallaría aquí mismo con
-un error de símbolo.
+Expected: `BUILD SUCCESSFUL` confirma que `method(:onRespuestaDeIntercambio)`
+resuelve bien dentro de `DeviceAuthImpl` (si no, `monkeyc` fallaría aquí
+mismo con un error de símbolo). `monkeydo ... -t` (nota: el flag correcto en
+el SDK instalado es `-t`, no `/t`) es conocido por no dar salida confiable
+en Mac (ver nota macOS del Task 5, Step 4) — si no imprime `Ran 6 tests`,
+la evidencia GREEN válida es el `BUILD SUCCESSFUL` más un rastreo a mano de
+los 6 casos contra la implementación.
 
 - [ ] **Step 5: Verificación manual del intercambio real — solo Juan Manuel**
 
@@ -1304,13 +1352,22 @@ module Config {
 
 - [ ] **Step 2: `RoutineClient.mc`**
 
+Mismo motivo que en el Task 9 (`DeviceAuth.mc`): `method(:x)` necesita un
+`self` real, así que la lógica vive en una `class RoutineClientImpl` con un
+`module RoutineClient` delgado encima que expone la misma sintaxis
+`RoutineClient.fetchX(...)` que ya usan los Tasks 12-14.
+
 ```javascript
 // connect-iq/venu2/source/RoutineClient.mc
 //
 // Lectura de la rutina ya clonada del usuario, directo contra PostgREST —
 // nunca se duplica rutina.js aquí (spec §2). No hay pruebas automáticas
 // (llamada de red real); se verifica a mano contra el proyecto real (Step 4).
-module RoutineClient {
+//
+// class + module delgado (no un module a secas) por la misma razón que
+// DeviceAuth.mc (Task 9): method(:onRoutineId)/method(:onLista) necesitan
+// un self de verdad.
+class RoutineClientImpl {
     var _onListoRoutineId = null;
     var _onListoLista = null;
 
@@ -1366,6 +1423,26 @@ module RoutineClient {
             return;
         }
         callback.invoke(data);
+    }
+}
+
+module RoutineClient {
+    var _impl = new RoutineClientImpl();
+
+    function fetchRoutineId(jwt, onListo) {
+        _impl.fetchRoutineId(jwt, onListo);
+    }
+
+    function fetchDays(jwt, routineId, onListo) {
+        _impl.fetchDays(jwt, routineId, onListo);
+    }
+
+    function fetchBlocks(jwt, dayId, onListo) {
+        _impl.fetchBlocks(jwt, dayId, onListo);
+    }
+
+    function fetchExercises(jwt, blockId, onListo) {
+        _impl.fetchExercises(jwt, blockId, onListo);
     }
 }
 ```
@@ -1442,13 +1519,22 @@ este pase — el siguiente pase pide un JWT nuevo.
 
 - [ ] **Step 1: Implementación**
 
+Mismo motivo que en el Task 9 (`DeviceAuth.mc`): `method(:x)` necesita un
+`self` real (aquí además lo pide `Timer.Timer.start()`, no solo
+`HttpClient.postJson`), así que la lógica vive en `class SyncServiceImpl`
+con un `module SyncService` delgado encima.
+
 ```javascript
 // connect-iq/venu2/source/SyncService.mc
 //
 // Drena LogQueue hacia subir_registro_ejercicio (sql/006_edicion_cliente.sql),
 // en orden, un pendiente a la vez — si uno falla, deja el resto encolado
 // para el siguiente pase (igual que sync.js: nunca bloquea, nunca lanza).
-module SyncService {
+//
+// class + module delgado (no un module a secas) por la misma razón que
+// DeviceAuth.mc (Task 9): method(:onTimer)/method(:onJwtParaEnvio)/
+// method(:onRespuestaDeEnvio) necesitan un self de verdad.
+class SyncServiceImpl {
     const INTERVALO_MS = 30 * 1000;
 
     var _timer = null;
@@ -1524,6 +1610,18 @@ module SyncService {
             DeviceAuth.invalidar();
         }
         _enProceso = false;
+    }
+}
+
+module SyncService {
+    var _impl = new SyncServiceImpl();
+
+    function iniciar() {
+        _impl.iniciar();
+    }
+
+    function drenar() {
+        _impl.drenar();
     }
 }
 ```
