@@ -18,7 +18,6 @@ import { detenerTodasLasGraficas } from "./graficas.js";
 import {
   modoEdicionActivo, pintarBotonModoEdicion, pintarFilaEdicion
 } from "./editor-rutina.js";
-import { CLAVE_PROGRESO, montarProgreso } from "./progreso.js";
 
 const ICONO_TECNICA =
   '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>';
@@ -28,6 +27,15 @@ function escaparHtml(s) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 }
+
+// Same value as progreso.js's own CLAVE_PROGRESO — declared again here
+// instead of imported so this file never pulls in progreso.js (and
+// therefore grafica-peso.js/grafica-ejercicio.js/Chart.js's loader chain)
+// just to know this one string. montarProgreso() itself is loaded with a
+// dynamic import() below, only when the tab is actually opened — a user
+// who never opens Progreso never pays for parsing those six modules on
+// every page load.
+const CLAVE_PROGRESO = "progreso";
 
 // The Progreso tab drawn as one more pill after día 7 — it carries no real
 // bloques (it isn't a training day), but a non-empty `bloques` keeps
@@ -95,7 +103,13 @@ export function pintarPanelActivo(contenedor, claveActiva, unidad, alReiniciar) 
     // canvases, it doesn't stop Chart.js's listeners on them (I3, final-
     // review brief — same leak family as the timers/images above).
     detenerTodasLasGraficas();
-    montarProgreso(contenedor, unidad);
+    // Dynamic import, never static (same reasoning as graficas.js's own
+    // cargarChart() for Chart.js itself): the six modules behind Progreso
+    // (progreso.js, grafica-peso.js, grafica-ejercicio.js, metricas.js,
+    // tabla-datos.js, peso-corporal.js) load only once this tab is actually
+    // opened, not on every page load for a user who trains without ever
+    // looking at it.
+    import("./progreso.js").then(({ montarProgreso }) => montarProgreso(contenedor, unidad));
     return;
   }
   pintarDia(contenedor, claveActiva, unidad, alReiniciar);
