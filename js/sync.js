@@ -10,7 +10,7 @@ import {
   pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto,
   adopcionResuelta, marcarAdopcionResuelta, esNoAdoptado, marcarNoAdoptado,
   marcaDeRutina, aplicarEdicionRemotaBloque, preferencias, aplicarPreferenciasRemotas,
-  marcaDePeso, aplicarPesoRemoto
+  marcaDePeso, aplicarPesoRemoto, esPesoNoAdoptado, marcarPesoNoAdoptado
 } from "./almacen.js";
 import { cliente, hayConfig } from "./db.js";
 import { sesionActual, alCambiarSesion } from "./auth.js";
@@ -515,12 +515,15 @@ async function descargarPerfil(c, userId) {
 }
 
 // Pulls every body_weight row belonging to the signed-in user and merges
-// each one into local storage. Same failure isolation and same rule 2 + 4
-// as exercise_logs' descargar() (there's no adoption offer for peso — rule
-// 1 doesn't apply here, same as it doesn't for rutina/perfil): a fecha
-// still in the "peso" upload queue is never overwritten, and otherwise the
-// local mark (marcaDePeso(), stamped at write time) is compared against
-// the row's updated_at — the more recent one wins.
+// each one into local storage. Same failure isolation and same rule 1 + 2 +
+// 4 as exercise_logs' descargar(): a fecha the user explicitly declined
+// when offered adoption (almacen.js's esPesoNoAdoptado(), set by
+// rechazarAdopcion() below) is never overwritten, a fecha still in the
+// "peso" upload queue is never overwritten either, and otherwise the local
+// mark (marcaDePeso(), stamped at write time) is compared against the row's
+// updated_at — the more recent one wins. (Routine edits and profile
+// preferences still have no adoption offer — rule 1 doesn't apply to
+// descargarRutina()/descargarPerfil().)
 async function descargarPesos(c, userId) {
   let filas;
   try {
@@ -538,6 +541,7 @@ async function descargarPesos(c, userId) {
   let aplicados = 0;
   for (const fila of filas) {
     const fecha = fila.measured_on;
+    if (esPesoNoAdoptado(fecha)) continue; // regla 1: declinado explícitamente, nunca se pisa
     if (enCola.has(fecha)) continue; // regla 2: lo local sin subir gana
 
     const marcaLocal = marcaDePeso(fecha);
@@ -645,16 +649,22 @@ export async function descargar(deps = DEPENDENCIAS_REALES) {
 
 // --- adopción del historial local sin sesión ---
 
-// Every queued "registro" write is history this device recorded without
-// ever having a session: guardarRegistro() enqueues on every save
-// regardless of session (see almacen.js), and with no session sincronizar()
-// has never been able to drain the queue — so whatever "registro" entries
-// are still pending the first time a session shows up is exactly what
-// needs offering. "preferencias" pendientes never count here: a unit
-// preference isn't training history, and it isn't what the user is
-// worried about handing over.
+// Every queued "registro" or "peso" write is history this device recorded
+// without ever having a session: guardarRegistro()/guardarPeso() enqueue on
+// every save regardless of session (see almacen.js), and with no session
+// sincronizar() has never been able to drain the queue — so whatever
+// "registro"/"peso" entries are still pending the first time a session
+// shows up is exactly what needs offering. "peso" counts here for the same
+// reason "registro" does — it's data the user recorded before this device
+// ever had an account — and it matters even more: it's more sensitive than
+// a set of an exercise, and (unlike "registro") there's no UI to delete it
+// from the server afterwards (see C1 in the final-review brief: this was
+// the exact gap that let body weight upload itself, or never even trigger
+// the banner, when it was the only thing queued). "preferencias" pendientes
+// never count here: a unit preference isn't training history, and it isn't
+// what the user is worried about handing over.
 export function historialSinAdoptar() {
-  return pendientes().filter((p) => p.tipo === "registro");
+  return pendientes().filter((p) => p.tipo === "registro" || p.tipo === "peso");
 }
 
 // True only when the offer genuinely applies: it hasn't been answered
@@ -678,21 +688,28 @@ export async function aceptarAdopcion(deps = DEPENDENCIAS_REALES) {
 
 // Decline: enqueues nothing new and deletes nothing local — the history
 // stays exactly as it was, only on this device, in localStorage. What it
-// DOES do is pull every "registro" pendiente currently offered back out of
-// the upload queue — otherwise the very next sincronizar() (autosync,
+// DOES do is pull every "registro"/"peso" pendiente currently offered back
+// out of the upload queue — otherwise the very next sincronizar() (autosync,
 // 'online', page load, anything) would upload them anyway, "no" or not —
-// AND mark each one esNoAdoptado() (almacen.js), so descargar()'s own
-// rule 1 refuses to let a later download overwrite it either. Without that
+// AND mark each one esNoAdoptado()/esPesoNoAdoptado() (almacen.js), so
+// descargar()'s own rule 1 (registros) and descargarPesos()'s own rule 1
+// (peso) refuse to let a later download overwrite it either. Without that
 // second part, "Ahora no" would only keep the upload from happening: the
 // very next descargar() would run its normal newest-wins comparison on a
 // record no longer protected by the queue, and could silently replace the
 // user's declined value with whatever the server has (see I2 in the
-// final-review brief) — the opposite of what declining promised. This
-// still never touches LLAVE_REGISTROS or LLAVE_MARCAS, so historial()/
-// registroDe() keep showing every one of these records exactly as before.
+// final-review brief, and C1 for the same gap on peso specifically) — the
+// opposite of what declining promised. This still never touches
+// LLAVE_REGISTROS, LLAVE_MARCAS or LLAVE_PESOS/LLAVE_MARCAS_PESO, so
+// historial()/registroDe()/pesos()/pesoDe() keep showing every one of these
+// records exactly as before.
 export function rechazarAdopcion() {
   for (const pendiente of historialSinAdoptar()) {
-    marcarNoAdoptado(pendiente.datos.slot, pendiente.datos.fecha);
+    if (pendiente.tipo === "peso") {
+      marcarPesoNoAdoptado(pendiente.datos.fecha);
+    } else {
+      marcarNoAdoptado(pendiente.datos.slot, pendiente.datos.fecha);
+    }
     quitarPendiente(pendiente.id);
   }
   marcarAdopcionResuelta();

@@ -419,6 +419,41 @@ export function marcarNoAdoptado(slot, fecha) {
   return escribirJSON(LLAVE_NO_ADOPTADOS, marcas);
 }
 
+// The peso equivalent of claveMarca(slot, fecha) above: body weight has no
+// slot, only a fecha, so the key is prefixed "peso|" instead — a slot string
+// is always "<dia>:<bloque>:<slug>" (colons, see rutina.js), so this can
+// never collide with a real claveMarca(slot, fecha) key in the same
+// LLAVE_NO_ADOPTADOS map.
+function claveMarcaPeso(fecha) {
+  return `peso|${fecha}`;
+}
+
+// True if `fecha`'s body-weight entry was explicitly declined when offered
+// for adoption (see marcarPesoNoAdoptado() below) — checked by sync.js's
+// descargarPesos() so a declined weigh-in is never silently replaced by
+// whatever the server has, same guarantee esNoAdoptado() gives "registro"
+// entries (see C1 in the final-review brief: this was missing entirely,
+// which let a declined body weight upload itself on the very next sync, or
+// be overwritten by a download when there was nothing local queued to
+// protect it).
+export function esPesoNoAdoptado(fecha) {
+  const marcas = leerJSON(LLAVE_NO_ADOPTADOS, {});
+  return marcas[claveMarcaPeso(fecha)] === true;
+}
+
+// Records that the user declined to upload `fecha`'s body weight when
+// offered adoption. Shares the LLAVE_NO_ADOPTADOS store with
+// marcarNoAdoptado() above (claveMarcaPeso()'s "peso|" prefix keeps the two
+// namespaces apart) rather than a second key, since both answer the exact
+// same question — "did the user say no to uploading this?" — for two
+// different record shapes. Returns true if persisted, false if storage
+// refused it — same contract as every other write here.
+export function marcarPesoNoAdoptado(fecha) {
+  const marcas = leerJSON(LLAVE_NO_ADOPTADOS, {});
+  marcas[claveMarcaPeso(fecha)] = true;
+  return escribirJSON(LLAVE_NO_ADOPTADOS, marcas);
+}
+
 // Returns the ISO timestamp of the last confirmed "Reiniciar" tap, or null
 // if it has never happened.
 export function ultimoReinicio() {
