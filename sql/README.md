@@ -196,3 +196,51 @@ de conflictos entre dispositivos depende de ese campo, así que sin esto el
 trabajo hecho en un dispositivo podía descartarse en silencio.
 
 Aplica este archivo como los demás, en el editor SQL.
+
+## 006_edicion_cliente.sql
+
+Agregado el 2026-09-03, corrigiendo una pérdida silenciosa de datos distinta
+de la de `005`, encontrada también probando contra la base real: la SUBIDA
+(`sync.js`, `enviarOperacion`) hacía un `upsert` ciego, sin ninguna guarda de
+tiempo. Reproducido: dispositivo A anota 111 sin red; dispositivo B anota 222
+con red y sincroniza; A recupera la red y sincroniza — el 222 de B
+desaparecía del servidor (y de B, en su siguiente descarga), sin aviso.
+Ganaba quien sincronizaba al último, no quien había escrito al último.
+
+Agrega `editado_en` (cuándo el CLIENTE hizo la edición — distinto de
+`updated_at`, que es cuándo el SERVIDOR tocó la fila) a `exercise_logs` y
+`body_weight`, y la función `subir_registro_ejercicio(...)`, que sync.js
+ahora llama por `rpc(...)` en vez del `upsert` directo. Solo pisa la fila si
+`p_editado_en` es más nuevo que lo que ya hay; corre `security invoker` y usa
+`auth.uid()` para el `user_id` (nunca un parámetro), así que las políticas de
+`002_rls.sql` siguen aplicando sin cambios. Siempre devuelve `{aplicado,
+fila}`: si `aplicado=false`, la fila devuelta es la que de verdad ganó, y
+sync.js corrige su copia local con ella en vez de dejar en pantalla un valor
+que el servidor ya descartó.
+
+Aplica este archivo como los demás, en el editor SQL. La consulta de
+comprobación está comentada al final del propio archivo.
+
+### Verificado en local, con Postgres 16 desechable
+
+Mismo método que `002/003/004` (Docker vía Colima, mock de `auth.users` /
+`auth.uid()` / roles `anon`/`authenticated`, contenedor destruido al
+terminar). Con `001`, `002` y `006` aplicados en ese orden:
+
+- `subir_registro_ejercicio` quedó `prosecdef = false` (security invoker,
+  no definer).
+- **El escenario del defecto, reproducido y corregido:** como el mismo
+  usuario, se llamó primero con `editado_en = now()` y `weight_kg = 222`
+  (aplicado=true), y después con `editado_en = now() - 1 hora` y
+  `weight_kg = 111` (simulando al dispositivo A sincronizando después, pero
+  habiendo editado antes) — la segunda llamada dio `aplicado = false` y
+  devolvió la fila con `weight_kg = 222`. La fila en la tabla, al final,
+  tenía `weight_kg = 222`: el 222 de B **nunca desapareció**.
+- **Aislamiento entre cuentas:** la misma llamada hecha como un segundo
+  usuario creó una fila propia (`user_id` distinto) sin tocar la del
+  primero — `auth.uid()` decide el dueño, nunca algo que el cliente mande.
+- **Sin sesión (`anon`):** la llamada fue rechazada por RLS (`new row
+  violates row-level security policy for table "exercise_logs"`), no
+  insertó nada.
+- Conteo final de filas: exactamente las 2 legítimas (una por usuario) —
+  nada del intento de `anon` quedó en la base.

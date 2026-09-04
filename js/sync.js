@@ -58,32 +58,52 @@ function mensajeDeError(e) {
 
 // --- envío de un pendiente ---
 
-// Maps one queued operation onto its Supabase upsert. `onConflict` matches
-// each table's real unique constraint, so resending the same pendiente
-// (a retry after a flaky send, or two devices catching up) overwrites the
-// same row instead of duplicating it.
+// Fallback edit time for a "registro" pendiente that has neither a local
+// mark (almacen.js's marcaDe()) nor its own enqueue timestamp (encolar()
+// stamps one on every operation it creates now, but a pendiente queued by
+// an older build of this app could predate that). Deliberately far in the
+// past, never "now": an edit with no known time loses any real comparison,
+// which only ever costs a redundant server round-trip (see the `aplicado`
+// handling below — never data loss), whereas "now" would resurrect the
+// exact bug this file exists to fix.
+const FECHA_MINIMA = "1970-01-01T00:00:00.000Z";
+
+// Maps one queued operation onto its Supabase write. A "registro" write
+// goes through the `subir_registro_ejercicio` RPC (see
+// sql/006_edicion_cliente.sql) instead of a bare upsert: that function only
+// applies the write when its `editado_en` — the moment the user actually
+// made the edit, never the moment it happens to reach the network — is
+// strictly newer than whatever the server already has, and always reports
+// back {aplicado, fila}: whether THIS write is the one that won, and the
+// row that actually ended up stored (this device's own, or the server's
+// pre-existing one when it didn't). That is what lets two devices race to
+// sync without whichever one merely syncs LAST silently overwriting
+// whichever one was edited last. `preferencias` has no such race today
+// (one profile row; last-write-wins there is a visible, acceptable
+// outcome) so it keeps the plain upsert.
 async function enviarOperacion(c, userId, op) {
   if (op.tipo === "registro") {
     const { slot, fecha, slug, pesoKg, series, reps, hecho } = op.datos;
-    return c.from("exercise_logs").upsert(
-      {
-        user_id: userId,
-        slot,
-        exercise_slug: slug,
-        logged_on: fecha,
-        weight_kg: pesoKg,
-        sets: series,
-        reps,
-        completed: hecho
-      },
-      { onConflict: "user_id,slot,logged_on" }
-    );
+    const editadoEn = marcaDe(slot, fecha) || op.encoladoEn || FECHA_MINIMA;
+    const { data, error } = await c.rpc("subir_registro_ejercicio", {
+      p_slot: slot,
+      p_slug: slug,
+      p_fecha: fecha,
+      p_peso: pesoKg,
+      p_series: series,
+      p_reps: reps,
+      p_hecho: hecho,
+      p_editado_en: editadoEn
+    });
+    if (error) return { error };
+    return { error: null, aplicado: data ? data.aplicado : false, fila: data ? data.fila : null };
   }
   if (op.tipo === "preferencias") {
-    return c.from("profiles").upsert(
+    const { error } = await c.from("profiles").upsert(
       { id: userId, unidad: op.datos.unidad },
       { onConflict: "id" }
     );
+    return { error };
   }
   // An operation type this build of sync.js doesn't know how to send yet
   // must never jam the queue forever behind it — drop it as if it had
@@ -138,11 +158,18 @@ export async function sincronizar(deps = DEPENDENCIAS_REALES) {
   const errores = [];
   for (const op of cola) {
     try {
-      const { error } = await enviarOperacion(c, sesion.user.id, op);
-      if (error) {
+      const resultado = await enviarOperacion(c, sesion.user.id, op);
+      if (resultado.error) {
         fallidos++;
-        errores.push(mensajeDeError(error));
+        errores.push(mensajeDeError(resultado.error));
         continue;
+      }
+      // The server already had something newer for this slot+fecha: not a
+      // failure — the write was correctly rejected, there's nothing to
+      // retry — but the local copy must catch up to the winner instead of
+      // going on showing a value the server has already discarded.
+      if (op.tipo === "registro" && resultado.aplicado === false && resultado.fila) {
+        aplicarRegistroRemoto(op.datos.slot, filaARegistro(resultado.fila), resultado.fila.updated_at);
       }
       quitarPendiente(op.id);
       enviados++;
@@ -164,6 +191,20 @@ export async function sincronizar(deps = DEPENDENCIAS_REALES) {
 // logged_on)` protects server-side.
 function claveFila(slot, fecha) {
   return `${slot}|${fecha}`;
+}
+
+// Maps a Postgres `exercise_logs` row — whether pulled by descargar() or
+// handed back by the subir_registro_ejercicio() RPC when this device's own
+// write loses — onto the record shape almacen.js stores locally.
+function filaARegistro(fila) {
+  return {
+    fecha: fila.logged_on,
+    slug: fila.exercise_slug,
+    pesoKg: fila.weight_kg,
+    series: fila.sets,
+    reps: fila.reps,
+    hecho: fila.completed
+  };
 }
 
 // Pulls every exercise_logs row belonging to the signed-in user and merges
@@ -233,15 +274,7 @@ export async function descargar(deps = DEPENDENCIAS_REALES) {
       if (marcaLocal && new Date(marcaLocal) >= new Date(fila.updated_at)) continue; // regla 3: local gana
     }
 
-    const registro = {
-      fecha,
-      slug: fila.exercise_slug,
-      pesoKg: fila.weight_kg,
-      series: fila.sets,
-      reps: fila.reps,
-      hecho: fila.completed
-    };
-    if (aplicarRegistroRemoto(slot, registro, fila.updated_at)) traidos++;
+    if (aplicarRegistroRemoto(slot, filaARegistro(fila), fila.updated_at)) traidos++;
   }
 
   return { traidos, detalle: "ok" };

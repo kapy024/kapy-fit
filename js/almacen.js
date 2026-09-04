@@ -300,13 +300,19 @@ function claveLogicaPendiente(pendiente) {
 // Assigns the id (callers never invent their own), and replaces — not
 // appends to — any existing pending entry with the same logical key, so
 // the queue stays bounded no matter how long the same field gets edited.
+// Also stamps `encoladoEn` (now, once, here): sync.js's enviarOperacion()
+// uses it as a fallback edit time for a "registro" pendiente whose
+// marcarLocal() mark (see marcaDe() above) never made it to storage — it
+// must never fall back to "now" at SEND time instead, or a device that
+// merely syncs last would always look like it edited last, which is
+// exactly the silent-data-loss bug this queue exists to avoid.
 // Returns the id of the (possibly replacing) queued entry.
 export function encolar(operacion) {
   const cola = leerJSON(LLAVE_COLA, []);
   const clave = claveLogicaPendiente(operacion);
   const sinDuplicado = clave == null ? cola : cola.filter((p) => claveLogicaPendiente(p) !== clave);
   const id = generarIdPendiente();
-  sinDuplicado.push({ ...operacion, id });
+  sinDuplicado.push({ ...operacion, id, encoladoEn: new Date().toISOString() });
   escribirJSON(LLAVE_COLA, sinDuplicado);
   return id;
 }
