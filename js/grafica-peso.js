@@ -6,7 +6,7 @@
 import { pesos, guardarPeso } from "./peso-corporal.js";
 import { hoyISO } from "./almacen.js";
 import { aKg, desdeKg } from "./unidades.js";
-import { promedioMovil } from "./metricas.js";
+import { promedioMovil, porSemana, semanaIsoDe } from "./metricas.js";
 import { cargarChart, paleta, opcionesBase } from "./graficas.js";
 import { montarTabla } from "./tabla-datos.js";
 import { fechaAMs, formatearFechaCorta, pluginCrosshair } from "./grafica-ejercicio.js";
@@ -15,23 +15,46 @@ const MINIMO_PUNTOS = 2;
 const VENTANA_PROMEDIO = 4;
 
 // Pure: {puntos, promedio, suficientes} for the whole body-weight history,
-// in the requested display unit. The moving average is computed in kg
-// (promedioMovil reused as-is, never reimplemented) and only converted to
-// `unidad` afterwards — converting first would round every point to one
-// decimal in the display unit before averaging, which isn't the same
-// number as rounding once at the end. `suficientes` mirrors the global
-// rule: fewer than 2 weigh-ins and there is nothing to plot.
+// in the requested display unit. `puntos` stays one entry per raw weigh-in
+// (never bucketed) so the chart's actual-weight line still shows every
+// measurement on its real date. `promedio`, though, is a genuine N-week
+// moving average: the raw records are grouped by ISO week with
+// metricas.js's porSemana() FIRST (each point anchored to that week's
+// Monday), and only THEN fed to promedioMovil() — averaging the raw
+// records directly, as this used to do, made "N" count records, not
+// weeks, so two weigh-ins in the same week silently shrank the window's
+// real time span (see I1 in the final-review brief). The average itself is
+// computed in kg (promedioMovil reused as-is, never reimplemented) and only
+// converted to `unidad` afterwards — converting first would round every
+// point to one decimal in the display unit before averaging, which isn't
+// the same number as rounding once at the end. `suficientes` mirrors the
+// global rule: fewer than 2 weigh-ins and there is nothing to plot.
 export function datosDePeso(unidad, ventanaSemanas) {
   const registros = pesos();
   const puntos = registros.map((r) => ({ fecha: r.fecha, valor: desdeKg(r.kg, unidad) }));
 
   const enKg = registros.map((r) => ({ fecha: r.fecha, valor: r.kg }));
-  const promedio = promedioMovil(enKg, ventanaSemanas).map((p) => ({
+  const semanal = porSemana(enKg);
+  const promedio = promedioMovil(semanal, ventanaSemanas).map((p) => ({
     fecha: p.fecha,
     valor: p.valor === null ? null : desdeKg(p.valor, unidad)
   }));
 
   return { puntos, promedio, suficientes: puntos.length >= MINIMO_PUNTOS };
+}
+
+// Looks up, for a raw weigh-in's `fecha`, the moving-average value of the
+// ISO week it falls in — `promedio` is now one point per week (see
+// datosDePeso() above), anchored to that week's Monday, so a raw date can't
+// be matched to it by array index or by exact date equality any more. Used
+// only by the table below; the chart plots `promedio` on its own weekly
+// x-positions and never needs this lookup. Returns null (not the string
+// "—") when that week isn't in `promedio` at all, or when it is but the
+// window hasn't filled yet — the table renders either case the same way.
+function promedioDeLaSemana(promedio, fecha) {
+  const semana = semanaIsoDe(fecha);
+  const punto = promedio.find((p) => semanaIsoDe(p.fecha) === semana);
+  return punto ? punto.valor : null;
 }
 
 // --- dibujo (Chart.js/DOM — no cubierto por las pruebas puras de arriba) ---
@@ -258,7 +281,10 @@ export async function montarGraficaPeso(contenedor, unidad) {
     montarTabla(tablaEl, {
       titulo: "Peso corporal",
       columnas: ["Fecha", `Peso (${unidad})`, `Promedio (${unidad})`],
-      filas: puntos.map((pt, i) => [pt.fecha, pt.valor, promedio[i]?.valor ?? "—"])
+      filas: puntos.map((pt) => {
+        const v = promedioDeLaSemana(promedio, pt.fecha);
+        return [pt.fecha, pt.valor, v === null ? "—" : v];
+      })
     });
   }
 

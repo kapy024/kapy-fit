@@ -58,8 +58,11 @@ export function promedioMovil(puntos, ventana) {
 
 // ISO-8601 week identifier ("2026-W36") for a "YYYY-MM-DD" date string.
 // Parsed and manipulated entirely in UTC so the result never shifts with
-// the browser's local timezone.
-function semanaIsoDe(fecha) {
+// the browser's local timezone. Exported so callers (grafica-peso.js) can
+// look up which week a raw date belongs to, e.g. to match a table row's
+// date back to the weekly-bucketed moving average porSemana()/
+// promedioMovil() computed for it.
+export function semanaIsoDe(fecha) {
   const fechaUtc = new Date(`${fecha}T00:00:00Z`);
   const diaIso = fechaUtc.getUTCDay() || 7; // Monday=1 ... Sunday=7
   const jueves = new Date(fechaUtc);
