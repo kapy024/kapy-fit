@@ -187,3 +187,36 @@ test("la tabla de peso muestra el promedio semanal correcto aunque haya más fil
   assertEq(filas[4].children[2].textContent, "80.5");
   limpiar();
 });
+
+// --- I4 (revisión final de rama): el toggle de vista restituye el foco ---
+
+// dibujar() reconstruye `cuerpo` entero (cuerpo.innerHTML = "") en cada
+// tap del toggle — el mismo defecto que pintarNav()/pintarDia() ya
+// resuelven para la pestaña de día y el selector de variantes, repetido
+// aquí. El elemento debe estar en el documento real: un elemento
+// desconectado nunca se vuelve document.activeElement.
+test("el toggle Último mes/Todo el histórico restituye el foco en vez de caer a <body> (I4)", async () => {
+  limpiar();
+  guardarPeso("2026-08-01", 80);
+  guardarPeso("2026-08-08", 81);
+  const contenedor = document.createElement("div");
+  document.body.appendChild(contenedor);
+  try {
+    await montarGraficaPeso(contenedor, "kg");
+    const [, botonTodo] = contenedor.querySelectorAll(".vista-toggle .chip-btn");
+    botonTodo.focus();
+    botonTodo.click();
+    await esperarMicrotareas();
+
+    assertEq(
+      document.activeElement !== document.body,
+      true,
+      "el foco no debe caer a <body> tras redibujar"
+    );
+    assertEq(document.activeElement.classList.contains("chip-btn"), true);
+    assertEq(document.activeElement.textContent, "Todo el histórico", "y en el botón que quedó activo");
+  } finally {
+    document.body.removeChild(contenedor);
+    limpiar();
+  }
+});

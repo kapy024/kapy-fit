@@ -246,6 +246,13 @@ export async function montarGraficaPeso(contenedor, unidad) {
   async function dibujar() {
     destruirGrafica(chartActual);
     chartActual = null;
+    // A "Último mes"/"Todo el histórico" tap leaves focus on the button
+    // that was just clicked — cuerpo.innerHTML = "" below destroys it same
+    // as pintarNav()/pintarDia() destroy the day pill / variant chip that
+    // triggered THEM, so this needs the same restore-after-redraw pattern
+    // those already use (I4, final-review brief: without it, focus fell
+    // back to <body> on every toggle).
+    const teniaFoco = cuerpo.contains(document.activeElement);
     cuerpo.innerHTML = "";
     const datos = datosDePeso(unidad, VENTANA_PROMEDIO);
 
@@ -259,6 +266,10 @@ export async function montarGraficaPeso(contenedor, unidad) {
     }
 
     cuerpo.appendChild(pintarToggleVista(vista, (v) => { vista = v; dibujar(); }));
+    if (teniaFoco) {
+      const activo = cuerpo.querySelector('.vista-toggle .chip-btn[aria-selected="true"]');
+      if (activo) activo.focus();
+    }
 
     const { puntos, promedio } = filtrarVista(datos.puntos, datos.promedio, vista);
     const p = paleta();
