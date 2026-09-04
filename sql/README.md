@@ -275,3 +275,73 @@ la llamada `anon` por REST que debe pasar de `22P02` a un error de
 permisos) están comentadas al final del propio archivo — no se verificaron
 aquí contra una base local porque el hallazgo ya se confirmó directamente
 contra producción; conviene correrlas ahí después de aplicar.
+
+## 008_rutina_sincronizada.sql
+
+Agregado el 2026-09-04, corrigiendo I3 de la revisión final de rama: la
+rutina editada SUBE pero nunca BAJA. `descargar()` (`sync.js`) solo
+consultaba `exercise_logs` — nada leía `routine_exercises` ni `profiles` —
+así que una edición hecha en un dispositivo nunca aparecía en el otro. Peor
+todavía: `enviarEdicionBloque()` hacía `update` CIEGOS sobre
+`routine_exercises`, sin el equivalente de `editado_en` que ya protege
+`exercise_logs`/`body_weight` desde `006`, así que dos dispositivos editando
+el mismo bloque sin haberse visto nunca se pisaban en silencio.
+
+Agrega `editado_en` a `routine_exercises` (mismo patrón que `006`) y la
+función `subir_edicion_rutina(...)`: `security invoker`, `set search_path`
+fijo, solo pisa el renglón si `p_editado_en` es más nuevo, y — a diferencia
+de `subir_registro_ejercicio` — el renglón se identifica por su propio `id`
+(server-side, no algo que `auth.uid()` pueda derivar solo), así que la
+función verifica explícitamente, antes de tocar nada, que ese `id`
+pertenece a una rutina cuyo dueño es `auth.uid()`, y lanza una excepción si
+no. El `EXECUTE` de `PUBLIC` se revoca en la misma migración que crea la
+función (no después, como le pasó a `clonar_plantilla` en `004`/`007`).
+
+Del lado del cliente (`js/sync.js`, `js/almacen.js`):
+- `enviarEdicionBloque()` ahora llama `subir_edicion_rutina` por `rpc(...)`
+  para cada renglón, en vez del `update` directo. Si algún renglón pierde
+  su conflicto, el pendiente igual se resuelve (no se reintenta para
+  siempre) y el bloque local se corrige completo con lo que el servidor
+  dice que quedó — nunca una mezcla de lo que este dispositivo ganó en
+  unos renglones y perdió en otros.
+- `descargar()` ahora también trae `routine_exercises` (agrupadas por
+  día:bloque) y `profiles` (la `unidad`), cada una en su propio `try/catch`
+  para que un fallo en una no tumbe a las otras. La rutina se resuelve con
+  las mismas cuatro reglas que ya usan los registros (cola primero, marca
+  de tiempo después) — comparando `marcaDeRutina()` (nueva, en
+  `almacen.js`, un timestamp por bloque, igual que `marcaDe()` para
+  registros) contra el `editado_en` más nuevo de las filas del bloque. El
+  perfil, al no tener una carrera real hoy (un solo campo, `unidad`), solo
+  usa la regla de la cola — si hay un `preferencias` pendiente sin subir,
+  no se pisa; si no, se toma lo del servidor.
+- Tanto la corrección tras un conflicto perdido como una descarga aplican
+  el bloque también a la `RUTINA` en memoria (`editor-rutina.js`'s
+  `aplicarEdicionABloque`), no solo a `localStorage`, para que se refleje
+  en pantalla sin esperar una recarga.
+
+Aplica este archivo como los demás, en el editor SQL. Las comprobaciones
+(columna, `security invoker`, permisos, el mismo par de escrituras
+condicionales que `006` y el rechazo por dueño) están comentadas al final
+del propio archivo.
+
+### Verificado en local, con Postgres 16 desechable
+
+Mismo método que `002/003/004/006` (Docker vía Colima, mock de
+`auth.users`/`auth.uid()`/roles `anon`/`authenticated`, contenedor
+destruido al terminar). Con `001`, `002`, `006` y `008` aplicados en ese
+orden, dos usuarios de prueba con una rutina de un renglón cada uno:
+
+- `subir_edicion_rutina` quedó `prosecdef = false` (security invoker) y su
+  `EXECUTE` solo aparece para `authenticated` (ni `PUBLIC` ni `anon`).
+- **El mismo escenario que 006, a nivel de rutina:** llamada con
+  `editado_en = now() - 1 hora` y peso 10 (rechazada, quedó lo que ya
+  había del insert inicial); llamada con `editado_en = now()` y peso 99
+  (aceptada); una tercera llamada, otra vez con `now() - 1 hora` y peso 10,
+  volvió a rechazarse — el renglón en la base terminó en peso 99, nunca se
+  pisó con el valor viejo.
+- **Rechazo por dueño:** el usuario A, con el `id` de un renglón real del
+  usuario B, recibió el error `renglón ... no pertenece a la rutina de
+  este usuario` — nunca tocó la fila ajena.
+- Sin sesión (`anon`): `permission denied for function
+  subir_edicion_rutina` — el `EXECUTE` revocado lo bloquea antes de que la
+  función llegue a correr.

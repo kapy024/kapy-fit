@@ -57,6 +57,15 @@ export const LLAVE_MARCAS = "hierro3:marcas";
 // has no override yet; rutina.js's built-in definition stands as-is until
 // the user changes it.
 export const LLAVE_EDICIONES_RUTINA = "hierro3:edicionesRutina";
+// One timestamp per "<dia>:<bloque>", the routine-edit equivalent of
+// LLAVE_MARCAS above — used only to resolve download conflicts for the
+// user's own routine (see sync.js's descargar()/aplicarEdicionRutinaRemota).
+// A local edit stamps "now" (guardarEdicionBloque, below); a block that
+// arrives FROM the server (whether via descargar() or a losing upload
+// corrected in place) is stamped with the server's own editado_en instead,
+// so the next comparison is apples to apples. Never shown in the UI and
+// never part of what edicionesRutina() itself returns.
+export const LLAVE_MARCAS_RUTINA = "hierro3:marcasRutina";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -183,6 +192,27 @@ function marcarLocal(slot, fecha, iso) {
   escribirJSON(LLAVE_MARCAS, marcas);
 }
 
+function claveMarcaRutina(diaClave, bloqueClave) {
+  return `${diaClave}:${bloqueClave}`;
+}
+
+// The local timestamp for one block's routine override ("<dia>:<bloque>"),
+// or null if never marked (a block never edited on this device, or one
+// edited before this feature existed). sync.js compares this against the
+// server's editado_en (the max across the block's rows) to decide who wins
+// a routine download conflict — same role marcaDe() plays for registros.
+export function marcaDeRutina(diaClave, bloqueClave) {
+  const marcas = leerJSON(LLAVE_MARCAS_RUTINA, {});
+  const valor = marcas[claveMarcaRutina(diaClave, bloqueClave)];
+  return typeof valor === "string" ? valor : null;
+}
+
+function marcarLocalRutina(diaClave, bloqueClave, iso) {
+  const marcas = leerJSON(LLAVE_MARCAS_RUTINA, {});
+  marcas[claveMarcaRutina(diaClave, bloqueClave)] = iso;
+  escribirJSON(LLAVE_MARCAS_RUTINA, marcas);
+}
+
 // Replaces the record for `registro.fecha` under `slot` (see
 // escribirRegistro()). `registro` is expected to carry its `slug`, so
 // historial(slug) can find it later. Returns true if the write persisted,
@@ -265,6 +295,22 @@ export function guardarPreferencias(prefs) {
   return ok;
 }
 
+// Merges `prefs` (from the server's own `profiles` row — sync.js's
+// descargar()) into the saved preferences, WITHOUT queuing anything for
+// re-upload — same reasoning as aplicarRegistroRemoto()/
+// aplicarEdicionRemotaBloque() above: a value that just arrived from the
+// server has no business going back up. There is deliberately no local
+// "mark" for preferencias (unlike registros/rutina): a single profile row
+// with one field the client cares about (unidad) has no real race to
+// resolve by timestamp — descargar()'s own pending-queue check is what
+// keeps an unsent local change from being overwritten (see sync.js), and
+// once nothing is queued, taking whatever the server has is a visible,
+// harmless outcome. Returns true if persisted, false if storage refused it.
+export function aplicarPreferenciasRemotas(prefs) {
+  const siguiente = { ...preferencias(), ...prefs };
+  return escribirJSON(LLAVE_PREFS, siguiente);
+}
+
 // Returns every saved block override, as { "<dia>:<bloque>": [ {slug,
 // series, reps, pesoKg, descanso, nota, slot}, ... ] }. Defaults to `{}`,
 // same defense against a corrupted (non-plain-object) value as
@@ -286,13 +332,32 @@ export function guardarEdicionBloque(diaClave, bloqueClave, ejercicios) {
   const todo = edicionesRutina();
   todo[`${diaClave}:${bloqueClave}`] = ejercicios;
   const ok = escribirJSON(LLAVE_EDICIONES_RUTINA, todo);
+  // Only a write that actually persisted gets marked and queued — same
+  // reasoning as guardarRegistro() above: a mark or a pendiente pointing at
+  // a block the app can't actually show would be worse than having neither.
   if (ok) {
+    marcarLocalRutina(diaClave, bloqueClave, new Date().toISOString());
     encolar({
       tipo: "rutina_bloque",
       entidad: "routine_exercises",
       datos: { diaClave, bloqueClave, ejercicios }
     });
   }
+  return ok;
+}
+
+// Writes a block's exercise list that came FROM the server (sync.js's
+// descargar(), or a losing "rutina_bloque" upload corrected in place) —
+// never queued for re-upload, same reasoning as aplicarRegistroRemoto()
+// above. The local mark is stamped with the server's own editado_en (not
+// "now"), so the next comparison treats this block exactly like one the
+// server has always known about, not one this device just invented.
+// Returns true if persisted, false if storage refused it.
+export function aplicarEdicionRemotaBloque(diaClave, bloqueClave, ejercicios, marcaServidor) {
+  const todo = edicionesRutina();
+  todo[`${diaClave}:${bloqueClave}`] = ejercicios;
+  const ok = escribirJSON(LLAVE_EDICIONES_RUTINA, todo);
+  if (ok) marcarLocalRutina(diaClave, bloqueClave, marcaServidor);
   return ok;
 }
 

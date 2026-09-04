@@ -8,10 +8,18 @@
 // a double instead, so these tests never touch the real network.
 import {
   pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto,
-  adopcionResuelta, marcarAdopcionResuelta, esNoAdoptado, marcarNoAdoptado
+  adopcionResuelta, marcarAdopcionResuelta, esNoAdoptado, marcarNoAdoptado,
+  marcaDeRutina, aplicarEdicionRemotaBloque, preferencias, aplicarPreferenciasRemotas
 } from "./almacen.js";
 import { cliente, hayConfig } from "./db.js";
 import { sesionActual, alCambiarSesion } from "./auth.js";
+// aplicarEdicionABloque mutates the live RUTINA singleton in memory — the
+// only way a routine edit that just arrived from the server (descargar(),
+// or a losing "rutina_bloque" upload corrected in place) shows up on screen
+// without waiting for a reload, same as an edit made locally through
+// editor-rutina.js's own mutations. No cycle: editor-rutina.js never
+// imports sync.js.
+import { aplicarEdicionABloque } from "./editor-rutina.js";
 
 const DEPENDENCIAS_REALES = { hayConfig, cliente, sesionActual, alCambiarSesion };
 
@@ -119,7 +127,13 @@ async function enviarOperacion(c, userId, op) {
   }
   if (op.tipo === "rutina_bloque") {
     const { diaClave, bloqueClave, ejercicios } = op.datos;
-    return enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios);
+    // Same reasoning as "registro" above: the whole block's write shares
+    // ONE edit timestamp (the moment editor-rutina.js made this change),
+    // never a fresh marcaDeRutina() read at send time — a pendiente
+    // replaced mid-flight by encolar() would otherwise let a later edit's
+    // mark stamp an earlier edit's still-in-flight data.
+    const editadoEn = op.encoladoEn || marcaDeRutina(diaClave, bloqueClave) || FECHA_MINIMA;
+    return enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios, editadoEn);
   }
   // An operation type this build of sync.js doesn't know how to send yet
   // must never jam the queue forever behind it — drop it as if it had
@@ -127,19 +141,72 @@ async function enviarOperacion(c, userId, op) {
   return { error: null };
 }
 
-// Uploads one block's edited exercise list to routine_exercises. Unlike
+// Maps a Postgres `routine_exercises` row — whether pulled by
+// descargarRutina() below or handed back by the subir_edicion_rutina() RPC
+// when this device's own write loses — onto the plain-record shape
+// almacen.js's edicionesRutina() stores locally (see editor-rutina.js's
+// bloqueAPlano(), which computes the exact same shape client-side). `id` and
+// `posicion` never travel into this shape: they're server bookkeeping, not
+// something editor-rutina.js's in-memory RUTINA or the local override ever
+// carries.
+function filaRutinaAPlano(fila) {
+  return {
+    slug: fila.exercise_slug,
+    series: fila.series,
+    reps: fila.reps,
+    pesoKg: fila.peso_objetivo_kg,
+    descanso: fila.descanso,
+    nota: fila.nota,
+    slot: fila.slot
+  };
+}
+
+// The most recent of a list of ISO timestamps (nulls/non-strings ignored),
+// or null if none are usable. Used to reduce a whole block's rows down to
+// ONE mark to compare against marcaDeRutina() — in practice every row in a
+// block shares the same editado_en (a whole-block edit stamps every row
+// with the same op.encoladoEn, see enviarOperacion above), but taking the
+// max is the conservative choice if that ever stops being strictly true.
+function marcaMaxima(fechas) {
+  let maxima = null;
+  for (const f of fechas) {
+    if (typeof f !== "string" || !f) continue;
+    if (maxima === null || new Date(f) > new Date(maxima)) maxima = f;
+  }
+  return maxima;
+}
+
+// Applies a routine block that just arrived from the server — either a full
+// download (descargarRutina() below) or the corrected state of a
+// "rutina_bloque" upload that lost its conflict (sincronizar()'s loop) —
+// onto BOTH local storage (almacen.js, never queued for re-upload) and the
+// live RUTINA singleton (editor-rutina.js's aplicarEdicionABloque), so the
+// screen reflects it immediately instead of waiting for a reload. Returns
+// true if the local write persisted.
+function aplicarEdicionRutinaRemota(diaClave, bloqueClave, ejercicios, marcaServidor) {
+  const ok = aplicarEdicionRemotaBloque(diaClave, bloqueClave, ejercicios, marcaServidor);
+  if (ok) aplicarEdicionABloque(diaClave, bloqueClave, ejercicios);
+  return ok;
+}
+
+// Uploads one block's edited exercise list to routine_exercises, through
+// subir_edicion_rutina() (sql/008_rutina_sincronizada.sql) instead of a bare
+// `update` — that function only applies the write when its `editado_en` is
+// strictly newer than what the server already has, the same conditional
+// guard subir_registro_ejercicio() (006) already gives exercise_logs. Unlike
 // exercise_logs, a routine_exercises row is never identified by anything the
 // client invents — its `id` lives only server-side, in the row that
 // 004_clonado.sql created for this user when their account was set up — so
 // the block's existing rows are looked up fresh by (día, bloque) every time,
 // scoped to THIS user's own routine (never the shared template, user_id
-// null) by requiring the join to `routines` to match `userId` — RLS enforces
-// the same thing server-side, this just avoids updating zero rows silently
-// when the join simply finds nothing.
+// null) by requiring the join to `routines` to match `userId` — RLS AND
+// subir_edicion_rutina()'s own explicit ownership check enforce the same
+// thing server-side, this just avoids updating zero rows silently when the
+// join simply finds nothing.
 //
 // Editing never creates or removes days/blocks (see editor-rutina.js), and
 // never adds a slot to a block either — only "quitar" shrinks it — so the
-// diff against what the server already has is always: update every row the
+// diff against what the server already has is always: send every row the
 // edited list still covers (rows are addressed by position, not by slot,
 // since a substitution or reorder is exactly what changes a row's slot/slug
 // out from under it), then delete whatever row is left over past the end of
@@ -147,7 +214,15 @@ async function enviarOperacion(c, userId, op) {
 // foreign key into routine_exercises at all — so history for a slot that
 // just got substituted or removed is untouched on the server, same as it is
 // locally (see almacen.js's guardarEdicionBloque).
-async function enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios) {
+//
+// If ANY row in the block loses its conflict, the whole pendiente is still
+// resolved (not retried forever) — but the local block is corrected with
+// the FULL server-side state of every row this call touched (accumulated
+// from each RPC call's own returned `fila`, win or lose, so no second
+// round-trip is needed), never a partial merge of some rows this device won
+// and some it lost: blending fields from two different edits that never saw
+// each other could produce a combination neither device actually intended.
+async function enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios, editadoEn) {
   const { data: filaBloque, error: errorBloque } = await c
     .from("routine_blocks")
     .select("id, routine_exercises(id, posicion), routine_days!inner(clave, routines!inner(user_id))")
@@ -160,27 +235,36 @@ async function enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios)
 
   const filas = [...(filaBloque.routine_exercises || [])].sort((a, b) => a.posicion - b.posicion);
 
+  let algunoRechazado = false;
+  const filasResultado = [];
   for (let i = 0; i < ejercicios.length; i++) {
     const fila = filas[i];
     if (!fila) break; // no debería pasar: editar nunca agrega ejercicios a un bloque
     const e = ejercicios[i];
-    const { error } = await c.from("routine_exercises").update({
-      exercise_slug: e.slug,
-      slot: e.slot,
-      posicion: i + 1,
-      series: e.series,
-      reps: e.reps,
-      peso_objetivo_kg: e.pesoKg,
-      descanso: e.descanso,
-      nota: e.nota
-    }).eq("id", fila.id);
+    const { data, error } = await c.rpc("subir_edicion_rutina", {
+      p_id: fila.id,
+      p_exercise_slug: e.slug,
+      p_slot: e.slot,
+      p_posicion: i + 1,
+      p_series: e.series,
+      p_reps: e.reps,
+      p_peso_objetivo_kg: e.pesoKg,
+      p_descanso: e.descanso,
+      p_nota: e.nota,
+      p_editado_en: editadoEn
+    });
     if (error) return { error };
+    if (data && data.aplicado === false) algunoRechazado = true;
+    if (data && data.fila) filasResultado.push(data.fila);
   }
   for (let i = ejercicios.length; i < filas.length; i++) {
     const { error } = await c.from("routine_exercises").delete().eq("id", filas[i].id);
     if (error) return { error };
   }
-  return { error: null };
+  if (algunoRechazado) {
+    return { error: null, aplicado: false, filas: filasResultado };
+  }
+  return { error: null, aplicado: true };
 }
 
 // --- ciclo de sincronización ---
@@ -262,6 +346,16 @@ export async function sincronizar(deps = DEPENDENCIAS_REALES) {
       if (op.tipo === "registro" && resultado.aplicado === false && resultado.fila) {
         aplicarRegistroRemoto(op.datos.slot, filaARegistro(resultado.fila), resultado.fila.updated_at);
       }
+      // Same idea, at block granularity: at least one row of this routine
+      // edit lost its conflict, so the pendiente is resolved (not retried),
+      // and the block is corrected locally — and on screen — with the full
+      // server-side state enviarEdicionBloque already gathered, instead of
+      // leaving an edit visible that the server has already discarded.
+      if (op.tipo === "rutina_bloque" && resultado.aplicado === false && resultado.filas) {
+        const ejerciciosPlanos = resultado.filas.map(filaRutinaAPlano);
+        const marcaServidor = marcaMaxima(resultado.filas.map((f) => f.editado_en));
+        aplicarEdicionRutinaRemota(op.datos.diaClave, op.datos.bloqueClave, ejerciciosPlanos, marcaServidor);
+      }
       quitarPendiente(op.id);
       enviados++;
     } catch (e) {
@@ -296,6 +390,108 @@ function filaARegistro(fila) {
     reps: fila.reps,
     hecho: fila.completed
   };
+}
+
+// Pulls every routine_exercises row of the signed-in user's OWN routine
+// (never the shared template) and merges it into local storage, block by
+// block. Never throws: any failure here is swallowed and reported as
+// `aplicados: 0` — this is one of three independent downloads descargar()
+// does (registros, rutina, perfil), and a broken join or an unexpected
+// double must never take the other two down with it. Same three rules
+// exercise_logs uses (rule 1, "declinado", doesn't apply — there is no
+// adoption offer for routine edits):
+//   2. A block still in the "rutina_bloque" upload queue is never
+//      overwritten — what hasn't gone up yet is newer than anything the
+//      server has, by definition.
+//   3. Otherwise, compare marcaDeRutina() (this device's own edit time,
+//      stamped by guardarEdicionBloque(), or the server's editado_en from a
+//      previous download/correction) against the block's rows' editado_en
+//      (reduced to one mark by marcaMaxima(), since a whole-block edit
+//      stamps every row alike). The more recent one wins; a block never
+//      marked on this device (never edited here) is treated as older than
+//      anything on the server, so a block edited only on ANOTHER device is
+//      still pulled down the first time this one syncs.
+// Nothing is ever deleted here — a losing side is only ever overwritten by
+// a newer value, and applying the same server state twice in a row simply
+// re-marks the block with the same timestamp it already had (idempotent).
+async function descargarRutina(c, userId) {
+  let filas;
+  try {
+    const { data, error } = await c
+      .from("routine_exercises")
+      .select(
+        "exercise_slug, slot, posicion, series, reps, peso_objetivo_kg, descanso, nota, editado_en, " +
+        "routine_blocks!inner(clave, routine_days!inner(clave, routines!inner(user_id)))"
+      )
+      .eq("routine_blocks.routine_days.routines.user_id", userId);
+    if (error) return { aplicados: 0 };
+    filas = Array.isArray(data) ? data : [];
+  } catch (_e) {
+    return { aplicados: 0 };
+  }
+
+  const porBloque = new Map();
+  for (const f of filas) {
+    try {
+      const diaClave = f.routine_blocks.routine_days.clave;
+      const bloqueClave = f.routine_blocks.clave;
+      const clave = `${diaClave}:${bloqueClave}`;
+      if (!porBloque.has(clave)) porBloque.set(clave, { diaClave, bloqueClave, filas: [] });
+      porBloque.get(clave).filas.push(f);
+    } catch (_e) {
+      // Fila con una forma inesperada (un doble incompleto en pruebas, o un
+      // futuro cambio de esquema): se ignora, nunca tumba el resto.
+    }
+  }
+
+  const bloquesEnCola = new Set(
+    pendientes()
+      .filter((p) => p.tipo === "rutina_bloque")
+      .map((p) => `${p.datos.diaClave}:${p.datos.bloqueClave}`)
+  );
+
+  let aplicados = 0;
+  for (const [clave, grupo] of porBloque) {
+    if (bloquesEnCola.has(clave)) continue; // regla 2: lo local sin subir gana
+
+    const ordenadas = [...grupo.filas].sort((a, b) => a.posicion - b.posicion);
+    const marcaServidor = marcaMaxima(ordenadas.map((f) => f.editado_en));
+
+    const marcaLocal = marcaDeRutina(grupo.diaClave, grupo.bloqueClave);
+    if (marcaLocal && marcaServidor && new Date(marcaLocal) >= new Date(marcaServidor)) continue; // regla 4: local gana
+
+    const ejerciciosPlanos = ordenadas.map(filaRutinaAPlano);
+    if (aplicarEdicionRutinaRemota(grupo.diaClave, grupo.bloqueClave, ejerciciosPlanos, marcaServidor)) aplicados++;
+  }
+  return { aplicados };
+}
+
+// Pulls the signed-in user's own `profiles` row and merges its `unidad`
+// into local preferences. Same failure isolation as descargarRutina() above
+// — never throws out of descargar(). Unlike registros/rutina, there is no
+// local mark to compare here (see almacen.js's aplicarPreferenciasRemotas):
+// the only guard is the pending-queue rule (rule 2) — a "preferencias"
+// pendiente still unsent means this device's own choice is the one that
+// should reach the server, not the other way around. Once nothing is
+// queued, taking the server's value is safe and idempotent: applying the
+// same unidad twice in a row is simply a no-op write of the same value.
+async function descargarPerfil(c, userId) {
+  let filas;
+  try {
+    const { data, error } = await c.from("profiles").select("unidad").eq("id", userId);
+    if (error) return { aplicado: false };
+    filas = Array.isArray(data) ? data : [];
+  } catch (_e) {
+    return { aplicado: false };
+  }
+
+  const fila = filas[0];
+  if (!fila || (fila.unidad !== "kg" && fila.unidad !== "lb")) return { aplicado: false };
+  if (pendientes().some((p) => p.tipo === "preferencias")) return { aplicado: false }; // regla 2
+
+  if (preferencias().unidad === fila.unidad) return { aplicado: false }; // ya coincide, nada que aplicar
+
+  return { aplicado: aplicarPreferenciasRemotas({ unidad: fila.unidad }) };
 }
 
 // Pulls every exercise_logs row belonging to the signed-in user and merges
@@ -378,7 +574,17 @@ export async function descargar(deps = DEPENDENCIAS_REALES) {
     if (aplicarRegistroRemoto(slot, filaARegistro(fila), fila.updated_at)) traidos++;
   }
 
-  return { traidos, detalle: "ok" };
+  // Rutina y perfil se bajan por separado de exercise_logs (tablas
+  // distintas, reglas de conflicto propias) — cada una aislada en su propio
+  // try/catch (ver descargarRutina()/descargarPerfil()) para que un doble
+  // de pruebas que solo conoce exercise_logs, o un fallo real en cualquiera
+  // de las dos, nunca tumbe la descarga de registros de arriba, que ya
+  // corrió. `traidos` se queda tal cual (exercise_logs, contrato existente);
+  // rutinaAplicada/perfilAplicado son campos nuevos, aditivos.
+  const { aplicados: rutinaAplicada } = await descargarRutina(c, sesion.user.id);
+  const { aplicado: perfilAplicado } = await descargarPerfil(c, sesion.user.id);
+
+  return { traidos, rutinaAplicada, perfilAplicado, detalle: "ok" };
 }
 
 // --- adopción del historial local sin sesión ---

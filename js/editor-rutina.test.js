@@ -10,7 +10,8 @@ import { test, assertEq, assertThrows } from "./pruebas.js";
 import { bloque, ejercicioPorSlot } from "./rutina.js";
 import {
   historialDeSlot, guardarRegistro, pendientes, marcarAdopcionResuelta,
-  edicionesRutina, LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS, LLAVE_EDICIONES_RUTINA
+  edicionesRutina, marcaDeRutina,
+  LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS, LLAVE_EDICIONES_RUTINA, LLAVE_MARCAS_RUTINA
 } from "./almacen.js";
 import { sincronizar, _reiniciarEstadoParaPruebas } from "./sync.js";
 import {
@@ -30,6 +31,7 @@ function limpiar() {
   localStorage.removeItem(LLAVE_COLA);
   localStorage.removeItem(LLAVE_MARCAS);
   localStorage.removeItem(LLAVE_EDICIONES_RUTINA);
+  localStorage.removeItem(LLAVE_MARCAS_RUTINA);
   _reiniciarEstadoParaPruebas();
   _reiniciarModoParaPruebas();
   marcarAdopcionResuelta();
@@ -287,15 +289,24 @@ test("el modo de edición empieza apagado y el botón lo enciende/apaga", () => 
 
 // --- subida a Supabase (routine_exercises) — con doble, nunca red real ---
 
-// Faithful-enough stand-in for the two tables enviarEdicionBloque (sync.js)
+// Faithful-enough stand-in for the two things enviarEdicionBloque (sync.js)
 // touches: routine_blocks (one nested select, filtered down to the block —
 // this double never checks the .eq() filters themselves, since that's
-// PostgREST's job to get right, not sync.js's) and routine_exercises
-// (update/delete by id). `filasRemotas` models what the server already has
-// for this block, as [{id, posicion}] — the same shape a real nested
-// select would return.
-function clienteRutinaFalso(filasRemotas) {
-  const llamadas = { updates: [], deletes: [] };
+// PostgREST's job to get right, not sync.js's) and
+// subir_edicion_rutina(...) (sql/008_rutina_sincronizada.sql) — a write only
+// applies when its p_editado_en is strictly newer than what's stored (same
+// `<`, not `<=`, as the real `where` clause), and it always reports back
+// {aplicado, fila}: whether this call's write is the one that won, and the
+// row that actually ended up stored — exactly the server's contract, so
+// sync.js's handling of a lost conflict can be tested without a real
+// database. `filasRemotas` models what the server already has for this
+// block, as [{id, posicion, editado_en, ...}] — the same shape a real
+// nested select (plus editado_en) would return. `rechazarTodo` simulates
+// every row in the block already having something newer than whatever
+// p_editado_en this test sends, regardless of the row's own editado_en.
+function clienteRutinaFalso(filasRemotas, { rechazarTodo = false } = {}) {
+  const llamadas = { rpc: [], deletes: [] };
+  const filas = new Map(filasRemotas.map((f) => [f.id, { ...f }]));
   const cliente = {
     from(tabla) {
       if (tabla === "routine_blocks") {
@@ -303,24 +314,20 @@ function clienteRutinaFalso(filasRemotas) {
           select() { return this; },
           eq() { return this; },
           async single() {
-            return { data: { id: "block-1", routine_exercises: filasRemotas }, error: null };
+            const restantes = [...filas.values()]
+              .sort((a, b) => a.posicion - b.posicion)
+              .map((f) => ({ id: f.id, posicion: f.posicion }));
+            return { data: { id: "block-1", routine_exercises: restantes }, error: null };
           }
         };
       }
       if (tabla === "routine_exercises") {
         return {
-          update(campos) {
-            return {
-              eq(_col, id) {
-                llamadas.updates.push({ id, campos });
-                return Promise.resolve({ error: null });
-              }
-            };
-          },
           delete() {
             return {
               eq(_col, id) {
                 llamadas.deletes.push(id);
+                filas.delete(id);
                 return Promise.resolve({ error: null });
               }
             };
@@ -328,9 +335,33 @@ function clienteRutinaFalso(filasRemotas) {
         };
       }
       throw new Error(`tabla inesperada en la prueba: ${tabla}`);
+    },
+    rpc(nombreFn, params) {
+      llamadas.rpc.push(params);
+      if (nombreFn !== "subir_edicion_rutina") throw new Error(`rpc inesperada: ${nombreFn}`);
+      const existente = filas.get(params.p_id);
+      if (!existente) return Promise.resolve({ data: null, error: { message: "renglón inexistente" } });
+      const gana = !rechazarTodo && new Date(existente.editado_en || 0) < new Date(params.p_editado_en);
+      if (!gana) {
+        return Promise.resolve({ data: { aplicado: false, fila: existente }, error: null });
+      }
+      const fila = {
+        id: params.p_id,
+        exercise_slug: params.p_exercise_slug,
+        slot: params.p_slot,
+        posicion: params.p_posicion,
+        series: params.p_series,
+        reps: params.p_reps,
+        peso_objetivo_kg: params.p_peso_objetivo_kg,
+        descanso: params.p_descanso,
+        nota: params.p_nota,
+        editado_en: params.p_editado_en
+      };
+      filas.set(params.p_id, fila);
+      return Promise.resolve({ data: { aplicado: true, fila }, error: null });
     }
   };
-  return { cliente, llamadas };
+  return { cliente, llamadas, filas };
 }
 
 function depsConCliente(cliente) {
@@ -342,11 +373,15 @@ function depsConCliente(cliente) {
   };
 }
 
+// editado_en deliberadamente muy vieja: cualquier p_editado_en real que
+// mande sincronizar() (marcaDeRutina(), estampada al editar) le gana sin
+// esfuerzo, así que las pruebas que no son sobre el conflicto en sí no
+// tienen que preocuparse por fechas.
 function filasRemotasPara(lista) {
-  return lista.map((_, i) => ({ id: `re-${i}`, posicion: i + 1 }));
+  return lista.map((_, i) => ({ id: `re-${i}`, posicion: i + 1, editado_en: "2000-01-01T00:00:00.000Z" }));
 }
 
-test("sincronizar sube el bloque editado: actualiza cada fila remota por posición", async () => {
+test("sincronizar sube el bloque editado: actualiza cada renglón remoto por posición", async () => {
   limpiar();
   const original = snapshotBloque("dia3", "base");
   cambiarValoresEjercicio("dia3", "base", original[0].slot, { pesoKg: 55 });
@@ -355,17 +390,17 @@ test("sincronizar sube el bloque editado: actualiza cada fila remota por posici�
   const r = await sincronizar(depsConCliente(cliente));
 
   assertEq(r.fallidos, 0);
-  assertEq(llamadas.updates.length, original.length);
-  assertEq(llamadas.updates[0].id, "re-0");
-  assertEq(llamadas.updates[0].campos.peso_objetivo_kg, 55);
-  assertEq(llamadas.updates[0].campos.exercise_slug, original[0].slug);
+  assertEq(llamadas.rpc.length, original.length);
+  assertEq(llamadas.rpc[0].p_id, "re-0");
+  assertEq(llamadas.rpc[0].p_peso_objetivo_kg, 55);
+  assertEq(llamadas.rpc[0].p_exercise_slug, original[0].slug);
   assertEq(llamadas.deletes.length, 0);
   assertEq(pendientes().length, 0, "el pendiente se drena tras subir con éxito");
 
   restaurar("dia3", "base", original);
 });
 
-test("sincronizar sube una sustitución: el exercise_slug y el slot de la fila cambian", async () => {
+test("sincronizar sube una sustitución: el exercise_slug y el slot del renglón cambian", async () => {
   limpiar();
   const original = snapshotBloque("dia3", "base");
   sustituirEjercicio("dia3", "base", original[0].slot, "sentadilla-salto");
@@ -374,25 +409,66 @@ test("sincronizar sube una sustitución: el exercise_slug y el slot de la fila c
   const r = await sincronizar(depsConCliente(cliente));
 
   assertEq(r.fallidos, 0);
-  assertEq(llamadas.updates[0].campos.exercise_slug, "sentadilla-salto");
-  assertEq(llamadas.updates[0].campos.slot, "dia3:base:sentadilla-salto");
+  assertEq(llamadas.rpc[0].p_exercise_slug, "sentadilla-salto");
+  assertEq(llamadas.rpc[0].p_slot, "dia3:base:sentadilla-salto");
 
   restaurar("dia3", "base", original);
 });
 
-test("sincronizar borra en la nube la fila que sobra cuando el bloque encoge (quitar)", async () => {
+test("sincronizar borra en la nube el renglón que sobra cuando el bloque encoge (quitar)", async () => {
   limpiar();
   const original = snapshotBloque("dia3", "base");
   quitarEjercicio("dia3", "base", original[0].slot);
 
   // El servidor todavía tiene el conteo VIEJO — es justo lo que la subida
-  // debe corregir borrando la fila que ya no corresponde a nada local.
+  // debe corregir borrando el renglón que ya no corresponde a nada local.
   const { cliente, llamadas } = clienteRutinaFalso(filasRemotasPara(original));
   const r = await sincronizar(depsConCliente(cliente));
 
   assertEq(r.fallidos, 0);
-  assertEq(llamadas.updates.length, original.length - 1);
+  assertEq(llamadas.rpc.length, original.length - 1);
   assertEq(llamadas.deletes, [`re-${original.length - 1}`]);
+
+  restaurar("dia3", "base", original);
+});
+
+// --- I3: la subida usa la función condicional, no updates ciegos ---
+
+test("sincronizar un pendiente de rutina rechazado por antigüedad se quita de la cola y corrige el bloque local", async () => {
+  limpiar();
+  const original = snapshotBloque("dia3", "base");
+  cambiarValoresEjercicio("dia3", "base", original[0].slot, { pesoKg: 111 });
+
+  // El servidor ya tiene, para ese mismo renglón, algo editado DESPUÉS de
+  // que este dispositivo hizo su propia escritura — simula lo que habría
+  // subido otro dispositivo mientras este estaba sin red. Los demás
+  // renglones del bloque siguen con su editado_en viejo (filasRemotasPara),
+  // así que ganan sin problema: el rechazo es de UN renglón, no del bloque
+  // completo, y aun así corrige el bloque entero de una vez.
+  const marcaLocal = marcaDeRutina("dia3", "base");
+  const marcaServidor = new Date(new Date(marcaLocal).getTime() + 60000).toISOString();
+  const filasRemotas = filasRemotasPara(original);
+  filasRemotas[0] = {
+    id: "re-0",
+    posicion: 1,
+    exercise_slug: original[0].slug,
+    slot: original[0].slot,
+    series: original[0].series,
+    reps: original[0].reps,
+    peso_objetivo_kg: 222,
+    descanso: original[0].descanso,
+    nota: original[0].nota,
+    editado_en: marcaServidor
+  };
+  const { cliente } = clienteRutinaFalso(filasRemotas);
+
+  const r = await sincronizar(depsConCliente(cliente));
+
+  assertEq(r.fallidos, 0, "un rechazo por antigüedad no es un fallo");
+  assertEq(r.enviados, 1);
+  assertEq(pendientes().length, 0, "el pendiente ya está resuelto, no debe reintentarse");
+  assertEq(ejercicioPorSlot(original[0].slot).pesoKg, 222, "el local se corrige a la versión del servidor, que es la que quedó");
+  assertEq(marcaDeRutina("dia3", "base"), marcaServidor, "la marca local también se corrige, para que una futura descarga compare como corresponde");
 
   restaurar("dia3", "base", original);
 });
