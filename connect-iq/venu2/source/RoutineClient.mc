@@ -5,20 +5,31 @@
 // (llamada de red real); se verifica a mano contra el proyecto real (Step 4).
 //
 // class + module delgado (no un module a secas) por la misma razón que
-// DeviceAuth.mc (Task 9): method(:onRoutineId)/method(:onLista) necesitan
-// un self de verdad.
+// DeviceAuth.mc (Task 9): method(:onRoutineId)/method(:onListaDias)/etc.
+// necesitan un self de verdad.
 class RoutineClientImpl {
     // Listas de callbacks en vuelo, no un solo slot — hallazgo C2 del
     // review final: WatchUi.Menu2InputDelegate.onSelect no cierra el menú
     // solo, así que un segundo tap durante el fetch (BLE en curso, sin
     // feedback visual) reentra a onSelect y, con un solo slot, pisaba el
-    // callback anterior. _pendientesLista es compartida por fetchDays/
-    // fetchBlocks/fetchExercises igual que antes lo era _onListoLista —
-    // ver análisis de solape entre-métodos junto a los call sites en
-    // DaySelectView.mc/BlockSelectView.mc: no es alcanzable con las
-    // pantallas actuales, así que un solo array compartido basta.
+    // callback anterior.
+    //
+    // Re-review posterior (ronda 2): un solo _pendientesLista compartido
+    // por fetchDays/fetchBlocks/fetchExercises solo era seguro porque
+    // _cargando en DaySelectDelegate/BlockSelectDelegate nunca se
+    // reseteaba en éxito, lo que impedía en la práctica que dos de estos
+    // tres fetches se dispararan a la vez desde el mismo delegate. Al
+    // corregir ese bug de _cargando (ahora sí se resetea en éxito), ese
+    // accidente de protección desaparece: un fetchBlocks y un
+    // fetchExercises podrían solaparse de verdad y entregar un payload de
+    // ejercicios a un callback que esperaba bloques (o viceversa) —
+    // corrupción de datos silenciosa. Por eso cada método tiene ahora su
+    // propio array y su propio handler de respuesta; nunca se cruzan
+    // aunque lleguen a solaparse.
     var _pendientesRoutineId = null;
-    var _pendientesLista = null;
+    var _pendientesDias = null;
+    var _pendientesBloques = null;
+    var _pendientesEjercicios = null;
 
     function cabeceras(jwt) {
         return {
@@ -43,6 +54,12 @@ class RoutineClientImpl {
     function onRoutineId(responseCode, data) {
         var callbacks = _pendientesRoutineId;
         _pendientesRoutineId = [];
+        // Defensa barata contra un array nulo (no alcanzable hoy con el
+        // código actual, pero evita un .size()/loop sobre null si algo
+        // llega a resetear el campo mientras hay un fetch en vuelo).
+        if (callbacks == null) {
+            return;
+        }
         var routineId = null;
         if (responseCode == 200 && data != null && data.size() > 0) {
             routineId = data[0].get("id");
@@ -55,49 +72,96 @@ class RoutineClientImpl {
     }
 
     function fetchDays(jwt, routineId, onListo) {
-        var enVuelo = _agregarPendienteLista(onListo);
+        if (_pendientesDias == null) {
+            _pendientesDias = [];
+        }
+        var enVuelo = _pendientesDias.size() > 0;
+        _pendientesDias.add(onListo);
         if (enVuelo) {
             return;
         }
         var url = Config.SUPABASE_URL + "/rest/v1/routine_days?routine_id=eq." + routineId
             + "&select=id,clave,etiqueta,enfoque&order=posicion";
-        HttpClient.getJson(url, cabeceras(jwt), method(:onLista));
+        HttpClient.getJson(url, cabeceras(jwt), method(:onListaDias));
+    }
+
+    function onListaDias(responseCode, data) {
+        var callbacks = _pendientesDias;
+        _pendientesDias = [];
+        // Defensa barata contra un array nulo (no alcanzable hoy con el
+        // código actual, pero evita un .size()/loop sobre null si algo
+        // llega a resetear el campo mientras hay un fetch en vuelo).
+        if (callbacks == null) {
+            return;
+        }
+        var resultado = null;
+        if (responseCode == 200 && data != null) {
+            resultado = data;
+        }
+        var i = 0;
+        while (i < callbacks.size()) {
+            callbacks[i].invoke(resultado);
+            i++;
+        }
     }
 
     function fetchBlocks(jwt, dayId, onListo) {
-        var enVuelo = _agregarPendienteLista(onListo);
+        if (_pendientesBloques == null) {
+            _pendientesBloques = [];
+        }
+        var enVuelo = _pendientesBloques.size() > 0;
+        _pendientesBloques.add(onListo);
         if (enVuelo) {
             return;
         }
         var url = Config.SUPABASE_URL + "/rest/v1/routine_blocks?day_id=eq." + dayId
             + "&select=id,clave,etiqueta&order=posicion";
-        HttpClient.getJson(url, cabeceras(jwt), method(:onLista));
+        HttpClient.getJson(url, cabeceras(jwt), method(:onListaBloques));
+    }
+
+    function onListaBloques(responseCode, data) {
+        var callbacks = _pendientesBloques;
+        _pendientesBloques = [];
+        // Defensa barata contra un array nulo (no alcanzable hoy con el
+        // código actual, pero evita un .size()/loop sobre null si algo
+        // llega a resetear el campo mientras hay un fetch en vuelo).
+        if (callbacks == null) {
+            return;
+        }
+        var resultado = null;
+        if (responseCode == 200 && data != null) {
+            resultado = data;
+        }
+        var i = 0;
+        while (i < callbacks.size()) {
+            callbacks[i].invoke(resultado);
+            i++;
+        }
     }
 
     function fetchExercises(jwt, blockId, onListo) {
-        var enVuelo = _agregarPendienteLista(onListo);
+        if (_pendientesEjercicios == null) {
+            _pendientesEjercicios = [];
+        }
+        var enVuelo = _pendientesEjercicios.size() > 0;
+        _pendientesEjercicios.add(onListo);
         if (enVuelo) {
             return;
         }
         var url = Config.SUPABASE_URL + "/rest/v1/routine_exercises?block_id=eq." + blockId
             + "&select=id,slot,exercise_slug,series,reps,descanso,exercises(nombre)&order=posicion";
-        HttpClient.getJson(url, cabeceras(jwt), method(:onLista));
+        HttpClient.getJson(url, cabeceras(jwt), method(:onListaEjercicios));
     }
 
-    // Agrega onListo a _pendientesLista (creándola si hace falta) y
-    // devuelve true si ya había un fetch en vuelo (no disparar otro).
-    function _agregarPendienteLista(onListo) {
-        if (_pendientesLista == null) {
-            _pendientesLista = [];
+    function onListaEjercicios(responseCode, data) {
+        var callbacks = _pendientesEjercicios;
+        _pendientesEjercicios = [];
+        // Defensa barata contra un array nulo (no alcanzable hoy con el
+        // código actual, pero evita un .size()/loop sobre null si algo
+        // llega a resetear el campo mientras hay un fetch en vuelo).
+        if (callbacks == null) {
+            return;
         }
-        var enVuelo = _pendientesLista.size() > 0;
-        _pendientesLista.add(onListo);
-        return enVuelo;
-    }
-
-    function onLista(responseCode, data) {
-        var callbacks = _pendientesLista;
-        _pendientesLista = [];
         var resultado = null;
         if (responseCode == 200 && data != null) {
             resultado = data;

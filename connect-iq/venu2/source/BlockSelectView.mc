@@ -20,8 +20,12 @@ class BlockSelectDelegate extends WatchUi.Menu2InputDelegate {
     var _jwt;
     // Misma guarda contra doble tap que DaySelectDelegate (hallazgo C2 del
     // review final) — el menú sigue interactivo mientras fetchExercises
-    // está en vuelo. No se resetea en éxito; sí en el fallo, para permitir
-    // reintentar.
+    // está en vuelo.
+    //
+    // Re-review posterior (ronda 2): igual que en DaySelectDelegate, un
+    // Back desde ExerciseLogView vuelve a ESTA MISMA instancia (pushView
+    // no la destruye), así que _cargando se resetea en TODAS las ramas
+    // terminales — éxito y fallo — no solo en el fallo.
     var _cargando = false;
 
     function initialize(jwt) {
@@ -39,9 +43,11 @@ class BlockSelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onEjercicios(ejercicios) {
-        if (ejercicios == null) {
-            _cargando = false;
-            return; // sin conexión: se queda en el selector de bloque
+        _cargando = false;
+        if (ejercicios == null || ejercicios.size() == 0) {
+            // sin conexión, o bloque real sin ejercicios: se queda en el
+            // selector de bloque.
+            return;
         }
         Nav.abrirCaptura(_jwt, ejercicios);
     }

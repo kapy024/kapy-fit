@@ -83,6 +83,12 @@ class DeviceAuthImpl {
     function onRespuestaDeIntercambio(responseCode, data) {
         var callbacks = _pendientes;
         _pendientes = [];
+        // Defensa barata: solo alcanzable si _reiniciarParaPruebas() corre
+        // en carrera con un intercambio en vuelo — no ejercitado hoy por
+        // ningún test, pero evita un .size()/loop sobre null.
+        if (callbacks == null) {
+            return;
+        }
         var resultado = interpretarRespuesta(responseCode, data);
         var jwt = null;
         if (resultado.get("ok")) {

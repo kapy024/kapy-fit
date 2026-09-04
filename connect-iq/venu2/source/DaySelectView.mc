@@ -47,9 +47,15 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     // Guarda contra doble tap: Menu2InputDelegate.onSelect no cierra el
     // menú solo, así que el menú sigue interactivo (y sin feedback visual)
     // mientras fetchBlocks/fetchExercises están en vuelo por BLE — hallazgo
-    // C2 del review final. No se resetea en éxito (la pantalla cambia); sí
-    // en cada rama de fallo, para que un intento sin conexión se pueda
-    // reintentar con otro tap.
+    // C2 del review final.
+    //
+    // Re-review posterior (ronda 2): WatchUi.pushView NO destruye esta
+    // vista/delegate — con el botón Back por defecto se vuelve a ESTA
+    // MISMA instancia. Si _cargando solo se resetea en fallo, un tap
+    // exitoso (día -> bloques -> Back) la deja en true para siempre y el
+    // menú queda muerto el resto de la sesión. Por eso ahora se resetea en
+    // TODAS las ramas terminales — éxito y fallo por igual — justo antes
+    // de navegar fuera o de quedarse en este menú.
     var _cargando = false;
 
     function initialize(jwt) {
@@ -68,15 +74,20 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onBloques(bloques) {
-        if (bloques == null) {
+        if (bloques == null || bloques.size() == 0) {
             _cargando = false;
-            return; // sin conexión: se queda en el selector de día
+            // sin conexión, o día real sin bloques: se queda en el
+            // selector de día (un menú vacío no sirve de nada).
+            return;
         }
         if (bloques.size() == 1) {
-            // Un solo bloque: salta directo a la captura (spec §4).
+            // Un solo bloque: salta directo a la captura (spec §4). Sigue
+            // "en vuelo" hasta que resuelva onEjerciciosDirecto, así que
+            // _cargando se queda en true aquí.
             RoutineClient.fetchExercises(_jwt, bloques[0].get("id"), method(:onEjerciciosDirecto));
             return;
         }
+        _cargando = false;
         WatchUi.pushView(
             new BlockSelectView(bloques),
             new BlockSelectDelegate(_jwt),
@@ -85,9 +96,11 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onEjerciciosDirecto(ejercicios) {
-        if (ejercicios == null) {
-            _cargando = false;
-            return; // sin conexión a media cadena: se queda en el selector de día
+        _cargando = false;
+        if (ejercicios == null || ejercicios.size() == 0) {
+            // sin conexión a media cadena, o bloque real sin ejercicios:
+            // se queda en el selector de día.
+            return;
         }
         Nav.abrirCaptura(_jwt, ejercicios);
     }
