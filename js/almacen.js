@@ -22,6 +22,16 @@ export const LLAVE_MIGRACION = "hierro3:migracion";
 // its own key, so app.js stops re-offering it once the user has answered,
 // independently of anything else stored.
 export const LLAVE_ADOPCION = "hierro3:adopcion";
+// One flag per (slot, fecha) the user explicitly declined to upload when
+// offered adoption (see sync.js's rechazarAdopcion()) — never cleared by
+// this app. Declining must mean "don't upload it AND don't let a download
+// overwrite it either": without a permanent record of which records those
+// were, removing them from the upload queue (LLAVE_COLA) is not enough —
+// the very next descargar() would apply its normal newest-wins comparison
+// to them and could replace the user's declined value with whatever the
+// server happens to have, which is exactly the opposite of what "Ahora no"
+// promised (see sync.js's descargar()).
+export const LLAVE_NO_ADOPTADOS = "hierro3:noAdoptados";
 // When the "Reiniciar" button on a day's panel was last used. Purely
 // informational (the #lastReset footer note in index.html) — never read to
 // decide what to clear, so a corrupted or missing value can't affect a
@@ -312,6 +322,25 @@ export function adopcionResuelta() {
 // contract as every other write here.
 export function marcarAdopcionResuelta() {
   return escribirJSON(LLAVE_ADOPCION, true);
+}
+
+// True if (slot, fecha) was explicitly declined when offered for adoption
+// (see marcarNoAdoptado() below) — checked by sync.js's descargar() so a
+// declined record is never silently replaced by whatever the server has.
+export function esNoAdoptado(slot, fecha) {
+  const marcas = leerJSON(LLAVE_NO_ADOPTADOS, {});
+  return marcas[claveMarca(slot, fecha)] === true;
+}
+
+// Records that the user declined to upload (slot, fecha) when offered
+// adoption. Reuses claveMarca()'s "<slot>|<fecha>" shape — same identity
+// descargar() already keys everything else by — rather than inventing a
+// second one. Returns true if persisted, false if storage refused it —
+// same contract as every other write here.
+export function marcarNoAdoptado(slot, fecha) {
+  const marcas = leerJSON(LLAVE_NO_ADOPTADOS, {});
+  marcas[claveMarca(slot, fecha)] = true;
+  return escribirJSON(LLAVE_NO_ADOPTADOS, marcas);
 }
 
 // Returns the ISO timestamp of the last confirmed "Reiniciar" tap, or null

@@ -8,7 +8,7 @@
 // a double instead, so these tests never touch the real network.
 import {
   pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto,
-  adopcionResuelta, marcarAdopcionResuelta
+  adopcionResuelta, marcarAdopcionResuelta, esNoAdoptado, marcarNoAdoptado
 } from "./almacen.js";
 import { cliente, hayConfig } from "./db.js";
 import { sesionActual, alCambiarSesion } from "./auth.js";
@@ -303,12 +303,21 @@ function filaARegistro(fila) {
 // sincronizar(): no config, no session, a network error, or a rejected
 // query is reported in the return value, never as an exception.
 //
-// Three rules, in order, decide each row:
-//   1. A (slot, fecha) still in the upload queue is never overwritten —
+// Four rules, in order, decide each row:
+//   1. A (slot, fecha) the user explicitly declined to upload when offered
+//      adoption (almacen.js's esNoAdoptado(), set by rechazarAdopcion()
+//      below) is never overwritten — "Ahora no" has to mean "don't upload
+//      it AND don't let a download replace it either", or declining would
+//      still lose the user's value the moment a download ran (see I2 in
+//      the final-review brief). This check has to come before rule 2:
+//      rechazarAdopcion() is exactly what TAKES a (slot, fecha) out of the
+//      queue, so without this rule that removal would strip the very
+//      protection the queue used to give it.
+//   2. A (slot, fecha) still in the upload queue is never overwritten —
 //      what hasn't gone up yet is newer than anything the server has, by
 //      definition (see almacen.js's cola).
-//   2. Otherwise, a row with no local counterpart is simply written down.
-//   3. Otherwise, both sides have it: compare the local mark (see
+//   3. Otherwise, a row with no local counterpart is simply written down.
+//   4. Otherwise, both sides have it: compare the local mark (see
 //      almacen.js's marcaDe(), stamped at write time — local time for a
 //      local write, the server's own updated_at for a previously
 //      downloaded one) against this row's `updated_at`. The more recent
@@ -357,12 +366,13 @@ export async function descargar(deps = DEPENDENCIAS_REALES) {
   for (const fila of filas) {
     const slot = fila.slot;
     const fecha = fila.logged_on;
-    if (enCola.has(claveFila(slot, fecha))) continue; // regla 1: lo local sin subir gana
+    if (esNoAdoptado(slot, fecha)) continue; // regla 1: declinado explícitamente, nunca se pisa
+    if (enCola.has(claveFila(slot, fecha))) continue; // regla 2: lo local sin subir gana
 
     const local = registroDe(slot, fecha);
     if (local) {
       const marcaLocal = marcaDe(slot, fecha);
-      if (marcaLocal && new Date(marcaLocal) >= new Date(fila.updated_at)) continue; // regla 3: local gana
+      if (marcaLocal && new Date(marcaLocal) >= new Date(fila.updated_at)) continue; // regla 4: local gana
     }
 
     if (aplicarRegistroRemoto(slot, filaARegistro(fila), fila.updated_at)) traidos++;
@@ -408,12 +418,21 @@ export async function aceptarAdopcion(deps = DEPENDENCIAS_REALES) {
 // stays exactly as it was, only on this device, in localStorage. What it
 // DOES do is pull every "registro" pendiente currently offered back out of
 // the upload queue — otherwise the very next sincronizar() (autosync,
-// 'online', page load, anything) would upload them anyway, "no" or not.
-// This only ever removes queue entries (see almacen.js's quitarPendiente);
-// it never touches LLAVE_REGISTROS or LLAVE_MARCAS, so historial()/
+// 'online', page load, anything) would upload them anyway, "no" or not —
+// AND mark each one esNoAdoptado() (almacen.js), so descargar()'s own
+// rule 1 refuses to let a later download overwrite it either. Without that
+// second part, "Ahora no" would only keep the upload from happening: the
+// very next descargar() would run its normal newest-wins comparison on a
+// record no longer protected by the queue, and could silently replace the
+// user's declined value with whatever the server has (see I2 in the
+// final-review brief) — the opposite of what declining promised. This
+// still never touches LLAVE_REGISTROS or LLAVE_MARCAS, so historial()/
 // registroDe() keep showing every one of these records exactly as before.
 export function rechazarAdopcion() {
-  for (const pendiente of historialSinAdoptar()) quitarPendiente(pendiente.id);
+  for (const pendiente of historialSinAdoptar()) {
+    marcarNoAdoptado(pendiente.datos.slot, pendiente.datos.fecha);
+    quitarPendiente(pendiente.id);
+  }
   marcarAdopcionResuelta();
 }
 

@@ -5,11 +5,11 @@
 import { test, assertEq } from "./pruebas.js";
 import {
   historialSinAdoptar, debeOfrecerAdopcion, aceptarAdopcion, rechazarAdopcion,
-  sincronizar, arrancarAutosync, _reiniciarEstadoParaPruebas
+  sincronizar, descargar, arrancarAutosync, _reiniciarEstadoParaPruebas
 } from "./sync.js";
 import {
-  guardarRegistro, registroDe, pendientes, guardarPreferencias, adopcionResuelta,
-  LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS, LLAVE_PREFS, LLAVE_ADOPCION
+  guardarRegistro, registroDe, marcaDe, pendientes, guardarPreferencias, adopcionResuelta,
+  LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS, LLAVE_PREFS, LLAVE_ADOPCION, LLAVE_NO_ADOPTADOS
 } from "./almacen.js";
 
 const SLOT = "dia3:base:sentadilla";
@@ -20,6 +20,7 @@ function limpiar() {
   localStorage.removeItem(LLAVE_MARCAS);
   localStorage.removeItem(LLAVE_PREFS);
   localStorage.removeItem(LLAVE_ADOPCION);
+  localStorage.removeItem(LLAVE_NO_ADOPTADOS);
   _reiniciarEstadoParaPruebas();
 }
 
@@ -344,4 +345,66 @@ test("un registro creado con sesión activa, sin historial previo que adoptar, s
   assertEq(llamadas.length, 1, "el registro nuevo debe subir por la cola normal, sin aviso de adopción");
   assertEq(r.enviados, 1);
   assertEq(pendientes().length, 0);
+});
+
+// --- I2 (revisión final de rama): rechazar debe sostenerse también frente
+// a una descarga posterior, no solo frente a la subida ---
+
+// Doble mínimo de .from("exercise_logs").select("*").eq(...), igual que en
+// descarga.test.js — la única llamada que descargar() hace.
+function clienteConFilas(filas) {
+  return {
+    from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: filas, error: null }) }) })
+  };
+}
+
+test("rechazar protege el registro también de una descarga posterior (I2)", async () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 100 }));
+  const marcaLocal = marcaDe(SLOT, "2026-09-01");
+
+  rechazarAdopcion();
+  assertEq(pendientes().length, 0, "rechazar ya lo sacó de la cola");
+
+  // El servidor trae, para esa misma fila, algo MÁS NUEVO que la marca
+  // local — si la única protección fuera "sigue en cola" (que rechazar ya
+  // quitó), la regla de updated_at de descargar() dejaría ganar al
+  // servidor y el 100 que el usuario dijo que no subiera desaparecería de
+  // todos modos.
+  const marcaServidor = new Date(new Date(marcaLocal).getTime() + 60000).toISOString();
+  const filaServidor = {
+    slot: SLOT, exercise_slug: "sentadilla", logged_on: "2026-09-01",
+    weight_kg: 80, sets: null, reps: null, completed: true, updated_at: marcaServidor
+  };
+
+  const r = await descargar({
+    hayConfig: () => true,
+    sesionActual: async () => ({ user: { id: "u1" } }),
+    cliente: async () => clienteConFilas([filaServidor])
+  });
+
+  assertEq(r.traidos, 0, "el registro declinado no se cuenta como traído: no se tocó");
+  assertEq(registroDe(SLOT, "2026-09-01").pesoKg, 100, "\"Ahora no\" también protege de una descarga que lo pisaría");
+});
+
+test("rechazar no protege un slot/fecha distinto: una descarga normal ahí sí aplica", async () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 100 }));
+  rechazarAdopcion();
+
+  // Otra fecha del mismo slot nunca se ofreció ni se rechazó: debe seguir
+  // comportándose como cualquier descarga normal.
+  const filaServidor = {
+    slot: SLOT, exercise_slug: "sentadilla", logged_on: "2026-09-05",
+    weight_kg: 50, sets: null, reps: null, completed: true,
+    updated_at: "2099-01-01T00:00:00.000Z"
+  };
+  const r = await descargar({
+    hayConfig: () => true,
+    sesionActual: async () => ({ user: { id: "u1" } }),
+    cliente: async () => clienteConFilas([filaServidor])
+  });
+
+  assertEq(r.traidos, 1);
+  assertEq(registroDe(SLOT, "2026-09-05").pesoKg, 50);
 });
