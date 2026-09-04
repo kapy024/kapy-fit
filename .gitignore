@@ -7,3 +7,4 @@ config.local.js
 .claude/
 .claude-flow/
 .worktrees/
+connect-iq/developer_key.der
