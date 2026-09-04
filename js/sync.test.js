@@ -306,3 +306,60 @@ test("un pendiente rechazado por antigüedad se quita de la cola y corrige el re
   assertEq(registroDe(SLOT, "2026-09-02").pesoKg, 222, "el local se corrige a la versión del servidor, que es la que quedó");
   assertEq(estado(), "al-dia");
 });
+
+// --- C1: una serie guardada durante una sincronización en vuelo no se destruye ---
+
+// Reproduce el caso del gimnasio: dos pendientes en cola (dos ejercicios
+// distintos), y mientras el primero sigue "en vuelo" hacia el servidor el
+// usuario corrige el peso del segundo. enviarOperacion() debe estampar la
+// escritura del segundo con SU PROPIA marca (op.encoladoEn), no con la que
+// marcaDe() tenga en el momento del envío — que para entonces ya avanzó a
+// la de la corrección, aunque los datos que se están enviando siguen
+// siendo los viejos.
+test("corregir un ejercicio mientras otro sigue en vuelo no pisa la corrección (C1)", async () => {
+  limpiar();
+  const SLOT_A = "dia1:base:sentadilla";
+  const SLOT_B = "dia1:base:press-militar";
+  const FECHA = "2026-09-02";
+
+  guardarRegistro(SLOT_A, reg(FECHA, "sentadilla", { pesoKg: 20 }));
+  guardarRegistro(SLOT_B, reg(FECHA, "press-militar", { pesoKg: 30 }));
+
+  const { cliente: clienteBase, registros } = crearClienteFalso();
+
+  // Retiene la respuesta del envío de sentadilla hasta que el test la
+  // libere, para poder editar press-militar mientras esa primera subida
+  // sigue pendiente — igual que el autosync de 60s del gimnasio, que no
+  // espera a que el usuario termine de escribir.
+  let liberarSentadilla;
+  const enVuelo = new Promise((resolve) => { liberarSentadilla = resolve; });
+  const clienteLento = {
+    from: (...args) => clienteBase.from(...args),
+    rpc(nombreFn, params) {
+      if (params.p_slug === "sentadilla") {
+        return enVuelo.then(() => clienteBase.rpc(nombreFn, params));
+      }
+      return clienteBase.rpc(nombreFn, params);
+    }
+  };
+
+  const deps = depsConSesion({ cliente: async () => clienteLento });
+  const primeraPasada = sincronizar(deps);
+
+  // Deja que sincronizar() llegue a esperar la respuesta de sentadilla.
+  await esperarMicrotareas();
+
+  // Un tic real de reloj entre las dos escrituras del mismo slot, para que
+  // encoladoEn/marcaDe no puedan coincidir por casualidad de milisegundo.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  guardarRegistro(SLOT_B, reg(FECHA, "press-militar", { pesoKg: 45 }));
+
+  liberarSentadilla();
+  await primeraPasada;
+
+  // Segunda pasada: drena lo que la corrección dejó pendiente.
+  await sincronizar(deps);
+
+  assertEq(registroDe(SLOT_B, FECHA).pesoKg, 45, "lo que el usuario escribió (45) no debe perderse");
+  assertEq(registros.get(`${SLOT_B}|${FECHA}`).weight_kg, 45, "el servidor también debe terminar en 45, no en el 30 viejo");
+});

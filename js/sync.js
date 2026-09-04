@@ -87,7 +87,16 @@ const FECHA_MINIMA = "1970-01-01T00:00:00.000Z";
 async function enviarOperacion(c, userId, op) {
   if (op.tipo === "registro") {
     const { slot, fecha, slug, pesoKg, series, reps, hecho } = op.datos;
-    const editadoEn = marcaDe(slot, fecha) || op.encoladoEn || FECHA_MINIMA;
+    // Must be the pendiente's OWN stamp, never a fresh marcaDe() read at
+    // send time: the queue snapshot this loop iterates (sincronizar()'s
+    // `cola`) can go stale mid-loop if encolar() replaces this very
+    // pendiente while an earlier item in the same pass is still in
+    // flight (see almacen.js's encolar()) — a fresh marcaDe() read would
+    // then pick up the REPLACEMENT's newer mark while `op.datos` still
+    // holds the value being replaced, stamping old data with a new-enough
+    // timestamp to beat its own successor's real write. Falling back to
+    // marcaDe() only covers a pendiente queued before encoladoEn existed.
+    const editadoEn = op.encoladoEn || marcaDe(slot, fecha) || FECHA_MINIMA;
     const { data, error } = await c.rpc("subir_registro_ejercicio", {
       p_slot: slot,
       p_slug: slug,
