@@ -186,3 +186,13 @@ archivo. El detalle de qué se verificó de otra forma (una base Postgres
 desechable local) está en `.superpowers/sdd/briefs2/tarea-2-3-report.md`
 (tareas 2 y 3) y `.superpowers/sdd/briefs2/tarea-4-5-report.md` (tareas 4 y
 5).
+
+## 005_updated_at.sql
+
+Agregado el 2026-09-03, después de probar la sincronización contra la base real.
+`updated_at` no se refrescaba en los UPDATE que produce un `upsert`, así que una
+fila cambiaba de valor conservando la marca de tiempo del insert. La resolución
+de conflictos entre dispositivos depende de ese campo, así que sin esto el
+trabajo hecho en un dispositivo podía descartarse en silencio.
+
+Aplica este archivo como los demás, en el editor SQL.
