@@ -72,6 +72,19 @@ function semanaIsoDe(fecha) {
 // Averages a {fecha, valor} series by ISO week, one output point per week
 // present in the data — weeks with no entries simply don't appear, rather
 // than being interpolated.
+// Monday of an ISO week label like "2026-W36", as YYYY-MM-DD.
+function lunesDe(etiquetaSemana) {
+  const [anio, sem] = etiquetaSemana.split("-W").map(Number);
+  // Jan 4th is always in ISO week 1.
+  const cuatroEnero = new Date(Date.UTC(anio, 0, 4));
+  const diaSemana = (cuatroEnero.getUTCDay() + 6) % 7;      // lunes = 0
+  const lunesSemana1 = new Date(cuatroEnero);
+  lunesSemana1.setUTCDate(cuatroEnero.getUTCDate() - diaSemana);
+  const lunes = new Date(lunesSemana1);
+  lunes.setUTCDate(lunesSemana1.getUTCDate() + (sem - 1) * 7);
+  return lunes.toISOString().slice(0, 10);
+}
+
 export function porSemana(registros) {
   const grupos = new Map();
   for (const registro of registros) {
@@ -83,7 +96,11 @@ export function porSemana(registros) {
   for (const [semana, items] of grupos) {
     const ordenados = [...items].sort((a, b) => a.fecha.localeCompare(b.fecha));
     const suma = items.reduce((acc, it) => acc + it.valor, 0);
-    resultado.push({ semana, fecha: ordenados[0].fecha, valor: suma / items.length });
+    // The point sits on the week's Monday, not on whichever day the user
+    // happened to weigh in: an evenly spaced weekly series is what makes a
+    // 4-week moving average actually span 4 weeks.
+    resultado.push({ semana, fecha: lunesDe(semana), valor: suma / items.length,
+                     primerRegistro: ordenados[0].fecha });
   }
   return resultado.sort((a, b) => a.semana.localeCompare(b.semana));
 }

@@ -54,3 +54,19 @@ test("una serie vacía no truena en ninguna función", () => {
   assertEq(promedioMovil([], 4), []);
   assertEq(porSemana([]), []);
 });
+
+test("cada punto semanal cae en el lunes de su semana, no en el día que se pesó", () => {
+  // 2026-09-01 es martes y 2026-09-03 jueves: ambos de la misma semana ISO,
+  // cuyo lunes es 2026-08-31.
+  const s = porSemana([{fecha:"2026-09-01",valor:80},{fecha:"2026-09-03",valor:82}]);
+  assertEq(s.length, 1);
+  assertEq(s[0].fecha, "2026-08-31");
+  assertEq(s[0].primerRegistro, "2026-09-01");
+});
+
+test("las semanas quedan separadas por exactamente 7 días", () => {
+  const s = porSemana([{fecha:"2026-09-01",valor:80},{fecha:"2026-09-10",valor:81},{fecha:"2026-09-15",valor:79}]);
+  const dias = (a,b) => (new Date(b) - new Date(a)) / 86400000;
+  assertEq(dias(s[0].fecha, s[1].fecha), 7);
+  assertEq(dias(s[1].fecha, s[2].fecha), 7);
+});
