@@ -15,7 +15,14 @@ class DeviceAuthImpl {
     const MARGIN_SECONDS = 60;
     const EXCHANGE_URL = "https://oakahiwejhzsxccrscmk.functions.supabase.co/device-token-exchange";
 
-    var _onListoPendiente = null;
+    // Lista de callbacks esperando un JWT vigente. Puede haber más de uno
+    // en vuelo a la vez: HierroVenuApp.onStart() llama SyncService.iniciar()
+    // (que puede disparar su propio getValidJwt() si la cola no está vacía)
+    // y luego DeviceAuth.getValidJwt(method(:onJwtInicial)) de forma
+    // síncrona, antes de que responda el primero — hallazgo C1 del review
+    // final. Un solo slot sobrescrito perdía el primer callback y hacía
+    // .invoke() sobre null en el segundo.
+    var _pendientes = null;
 
     // true si un JWT con expiración `exp` (segundos, mismo reloj que
     // Time.now().value()) ya no sirve en el momento `ahora`, con MARGIN_SECONDS
@@ -37,7 +44,16 @@ class DeviceAuthImpl {
             onListo.invoke(jwt);
             return;
         }
-        _onListoPendiente = onListo;
+        if (_pendientes == null) {
+            _pendientes = [];
+        }
+        var yaHabiaIntercambioEnVuelo = _pendientes.size() > 0;
+        _pendientes.add(onListo);
+        if (yaHabiaIntercambioEnVuelo) {
+            // Ya hay un postJson en camino: este waiter se resuelve cuando
+            // responda ese, no dispara una segunda llamada de red.
+            return;
+        }
         HttpClient.postJson(
             EXCHANGE_URL,
             {},
@@ -65,16 +81,20 @@ class DeviceAuthImpl {
     }
 
     function onRespuestaDeIntercambio(responseCode, data) {
-        var callback = _onListoPendiente;
-        _onListoPendiente = null;
+        var callbacks = _pendientes;
+        _pendientes = [];
         var resultado = interpretarRespuesta(responseCode, data);
-        if (!resultado.get("ok")) {
-            callback.invoke(null);
-            return;
+        var jwt = null;
+        if (resultado.get("ok")) {
+            jwt = resultado.get("jwt");
+            Toybox.Application.Storage.setValue(JWT_KEY, jwt);
+            Toybox.Application.Storage.setValue(EXP_KEY, Toybox.Time.now().value() + resultado.get("expiresIn"));
         }
-        Toybox.Application.Storage.setValue(JWT_KEY, resultado.get("jwt"));
-        Toybox.Application.Storage.setValue(EXP_KEY, Toybox.Time.now().value() + resultado.get("expiresIn"));
-        callback.invoke(resultado.get("jwt"));
+        var i = 0;
+        while (i < callbacks.size()) {
+            callbacks[i].invoke(jwt);
+            i++;
+        }
     }
 
     // Borra el JWT cacheado, forzando una renovación en el próximo
@@ -89,6 +109,7 @@ class DeviceAuthImpl {
 
     function _reiniciarParaPruebas() {
         invalidar();
+        _pendientes = null;
     }
 }
 

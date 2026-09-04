@@ -44,6 +44,13 @@ class DaySelectView extends WatchUi.Menu2 {
 
 class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     var _jwt;
+    // Guarda contra doble tap: Menu2InputDelegate.onSelect no cierra el
+    // menú solo, así que el menú sigue interactivo (y sin feedback visual)
+    // mientras fetchBlocks/fetchExercises están en vuelo por BLE — hallazgo
+    // C2 del review final. No se resetea en éxito (la pantalla cambia); sí
+    // en cada rama de fallo, para que un intento sin conexión se pueda
+    // reintentar con otro tap.
+    var _cargando = false;
 
     function initialize(jwt) {
         Menu2InputDelegate.initialize();
@@ -51,6 +58,10 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onSelect(item) {
+        if (_cargando) {
+            return;
+        }
+        _cargando = true;
         var dia = item.getId() as Lang.Dictionary;
         Toybox.Application.Storage.setValue("ultimo_dia_clave", dia.get("clave"));
         RoutineClient.fetchBlocks(_jwt, dia.get("id"), method(:onBloques));
@@ -58,6 +69,7 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
 
     function onBloques(bloques) {
         if (bloques == null) {
+            _cargando = false;
             return; // sin conexión: se queda en el selector de día
         }
         if (bloques.size() == 1) {
@@ -73,6 +85,10 @@ class DaySelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onEjerciciosDirecto(ejercicios) {
+        if (ejercicios == null) {
+            _cargando = false;
+            return; // sin conexión a media cadena: se queda en el selector de día
+        }
         Nav.abrirCaptura(_jwt, ejercicios);
     }
 }

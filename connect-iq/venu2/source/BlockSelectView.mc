@@ -18,6 +18,11 @@ class BlockSelectView extends WatchUi.Menu2 {
 
 class BlockSelectDelegate extends WatchUi.Menu2InputDelegate {
     var _jwt;
+    // Misma guarda contra doble tap que DaySelectDelegate (hallazgo C2 del
+    // review final) — el menú sigue interactivo mientras fetchExercises
+    // está en vuelo. No se resetea en éxito; sí en el fallo, para permitir
+    // reintentar.
+    var _cargando = false;
 
     function initialize(jwt) {
         Menu2InputDelegate.initialize();
@@ -25,11 +30,19 @@ class BlockSelectDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onSelect(item) {
+        if (_cargando) {
+            return;
+        }
+        _cargando = true;
         var bloque = item.getId() as Lang.Dictionary;
         RoutineClient.fetchExercises(_jwt, bloque.get("id"), method(:onEjercicios));
     }
 
     function onEjercicios(ejercicios) {
+        if (ejercicios == null) {
+            _cargando = false;
+            return; // sin conexión: se queda en el selector de bloque
+        }
         Nav.abrirCaptura(_jwt, ejercicios);
     }
 }
