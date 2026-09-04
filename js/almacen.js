@@ -136,9 +136,51 @@ function tieneFechaValida(r) {
   return !!r && typeof r.fecha === "string" && r.fecha !== "";
 }
 
+// In-memory cache of LLAVE_REGISTROS's parsed content, keyed by the raw
+// string localStorage last returned for it — cheap to compare on every
+// call, so a read that finds the string unchanged skips JSON.parse (and
+// the filter/sort/spread work historial()/historialDeSlot() do on top of
+// it) instead of redoing it from scratch every time. registro.js's history
+// panel reads this store twice per exercise row on every render
+// (refrescarContador() + montarMinilinea()) — with a year of history (a
+// few thousand rows) that made a single checkbox tap, after enough
+// renders, cost dozens of full-store reparses (measured: 58 reads, 236 ms
+// — see I5, final-review brief). Comparing the raw string — rather than
+// only invalidating from inside escribirRegistro() below — also keeps this
+// safe against anything that writes LLAVE_REGISTROS directly without going
+// through it: almacen.test.js's own fixtures do exactly that, by design,
+// to seed corrupted/edge-case data between tests.
+let cacheTextoRegistros;
+let cacheTodoRegistros = null;
+let contadorReparseosRegistros = 0;
+
+function todoRegistros() {
+  let texto;
+  try {
+    texto = localStorage.getItem(LLAVE_REGISTROS);
+  } catch (_) {
+    texto = null;
+  }
+  if (texto !== cacheTextoRegistros) {
+    cacheTextoRegistros = texto;
+    cacheTodoRegistros = leerJSON(LLAVE_REGISTROS, {});
+    contadorReparseosRegistros++;
+  }
+  return cacheTodoRegistros;
+}
+
+// Test-only seam: how many times todoRegistros() has actually reparsed
+// LLAVE_REGISTROS from scratch (a cache miss) since the page loaded —
+// almacen.test.js uses this to prove historial()/historialDeSlot() reuse
+// the cache across repeated reads instead of reparsing every time (I5,
+// final-review brief). Never used outside tests.
+export function _contarReparseosRegistrosParaPruebas() {
+  return contadorReparseosRegistros;
+}
+
 // Returns every record of one routine row (`slot`), ascending by date.
 export function historialDeSlot(slot) {
-  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const todo = todoRegistros();
   const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   return lista.filter(tieneFechaValida).sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
@@ -152,7 +194,7 @@ export function historialDeSlot(slot) {
 // record itself is untouched), so a chart can tell apart, say, the light
 // and the heavy set of the same exercise inside one history.
 export function historial(slug) {
-  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const todo = todoRegistros();
   const juntos = [];
   for (const slot of Object.keys(todo)) {
     const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
@@ -174,13 +216,26 @@ export function registroDe(slot, fecha) {
 // from a prior save don't survive), or appends it if that date has no
 // record yet.
 function escribirRegistro(slot, registro) {
-  const todo = leerJSON(LLAVE_REGISTROS, {});
+  const todo = todoRegistros();
   const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   const i = lista.findIndex((r) => r.fecha === registro.fecha);
   if (i >= 0) lista[i] = registro;
   else lista.push(registro);
   todo[slot] = lista;
-  return escribirJSON(LLAVE_REGISTROS, todo);
+  const ok = escribirJSON(LLAVE_REGISTROS, todo);
+  if (!ok) {
+    // `todo` IS the cached object (todoRegistros() above, never a fresh
+    // copy) — already mutated by the lines above even though the write
+    // below never landed. A failed write must never leave that phantom
+    // mutation visible to the next historial()/historialDeSlot() read: the
+    // raw-string check in todoRegistros() can't catch it on its own here
+    // (actual storage never changed, so the string still matches), so the
+    // cache is forced back to "reparse next time" instead — the next read
+    // gets what's ACTUALLY on disk, which never had this write.
+    cacheTextoRegistros = undefined;
+    cacheTodoRegistros = null;
+  }
+  return ok;
 }
 
 function claveMarca(slot, fecha) {

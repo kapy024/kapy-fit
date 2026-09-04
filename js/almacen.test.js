@@ -8,6 +8,7 @@ import {
   guardarRegistro, historial, historialDeSlot, registroDe,
   preferencias, guardarPreferencias, llavesLegadas,
   migracionResuelta, marcarMigracionResuelta,
+  _contarReparseosRegistrosParaPruebas,
   LLAVE_REGISTROS, LLAVE_PREFS, LLAVE_MIGRACION
 } from "./almacen.js";
 import { aKg } from "./unidades.js";
@@ -157,6 +158,69 @@ test("un JSON corrupto no tumba la app", () => {
 test("guardarRegistro devuelve true cuando persiste", () => {
   limpiar();
   assertEq(guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 })), true);
+});
+
+// --- caché de LLAVE_REGISTROS (I5, revisión final de rama) ---
+
+// registro.js's history panel reads historial()/historialDeSlot() twice
+// por fila en cada render (ver I5 del hallazgo final) — sin memoria, un año
+// de historial (miles de filas) hace que cada una de esas lecturas
+// reparsee el almacén COMPLETO desde cero. Esta prueba comprueba la parte
+// que no se ve desde afuera (el resultado es igual con o sin caché): que
+// una racha de lecturas sin ningún guardado de por medio reparsea UNA sola
+// vez, no una por llamada.
+test("historial()/historialDeSlot() reparsean LLAVE_REGISTROS solo cuando el contenido cambió, no en cada llamada", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", "sentadilla", { pesoKg: 20 }));
+  // La primera lectura tras el guardado de arriba sí reparsea (el texto
+  // crudo cambió) — se descuenta aquí para que la prueba solo mida lo que
+  // pasa DESPUÉS, con el guardado ya asentado.
+  historial("sentadilla");
+  const antes = _contarReparseosRegistrosParaPruebas();
+
+  historial("sentadilla");
+  historialDeSlot(SLOT);
+  historial("sentadilla");
+  historialDeSlot(SLOT);
+
+  assertEq(
+    _contarReparseosRegistrosParaPruebas(), antes,
+    "cuatro lecturas más, sin ningún guardado de por medio: cero reparseos nuevos"
+  );
+  limpiar();
+});
+
+test("guardarRegistro() invalida la caché: la siguiente lectura ve el dato nuevo, sin reparsear de más", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", "sentadilla", { pesoKg: 20 }));
+  historial("sentadilla"); // asienta la caché en el estado post-guardado
+  const antes = _contarReparseosRegistrosParaPruebas();
+
+  guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 22 }));
+  const h = historial("sentadilla");
+
+  assertEq(h.map((r) => r.fecha), ["2026-09-01", "2026-09-02"], "el guardado nuevo se ve de inmediato");
+  assertEq(_contarReparseosRegistrosParaPruebas(), antes + 1, "un guardado, un reparseo en la siguiente lectura — no más");
+  limpiar();
+});
+
+// La prueba de seguridad del diseño: invalidar SOLO desde escribirRegistro()
+// (en vez de comparar el texto crudo) rompería esto — varias pruebas de
+// este mismo archivo escriben LLAVE_REGISTROS directamente con
+// localStorage.setItem para sembrar datos corruptos/de borde (ver más
+// arriba), nunca a través de escribirRegistro(). La caché tiene que
+// detectar ese cambio igual, o mostraría datos de una prueba anterior.
+test("un cambio directo a localStorage (fuera de escribirRegistro) se detecta y nunca deja datos obsoletos en caché", () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", "sentadilla", { pesoKg: 20 }));
+  assertEq(historial("sentadilla").length, 1);
+
+  // Fixture directa, como en "un registro sin fecha se descarta..." de
+  // arriba — nunca pasa por escribirRegistro().
+  localStorage.setItem(LLAVE_REGISTROS, JSON.stringify({}));
+
+  assertEq(historial("sentadilla").length, 0, "la caché no debe esconder un cambio hecho fuera de escribirRegistro()");
+  limpiar();
 });
 
 test("guardarRegistro devuelve false cuando el almacenamiento falla", () => {

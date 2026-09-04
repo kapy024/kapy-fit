@@ -6,7 +6,8 @@
 import { test, assertEq } from "./pruebas.js";
 import {
   montarCampos, montarPalomita, montarTemporizador, montarHistorial,
-  parseRestSeconds, crearAviso, contarCompletados, reiniciarCompletadosDeHoy
+  parseRestSeconds, crearAviso, contarCompletados, reiniciarCompletadosDeHoy,
+  limpiarEscuchasHistorial, _contarEscuchasHistorialParaPruebas
 } from "./registro.js";
 import {
   guardarRegistro, registroDe, hoyISO,
@@ -405,4 +406,35 @@ test("un ejercicio con un solo renglón no le agrega etiqueta de origen a sus fi
   fire(toggle, "click");
   const fila = buscar(contenedor, (el) => el.className === "hv");
   assertEq(fila.textContent, "30 kg");
+});
+
+// --- escuchas de "registro-guardado" (I5, revisión final de rama) ---
+
+// Antes de este arreglo, montarHistorial() agregaba su propia
+// document.addEventListener("registro-guardado", ...) en cada llamada, sin
+// removerla nunca — un repintado del día (cambio de variante, de pestaña,
+// modo edición) que vuelve a montar las mismas filas dejaba TODAS las
+// escuchas anteriores vivas. render.js's pintarDia() ahora llama
+// limpiarEscuchasHistorial() antes de repintar (el mismo punto donde ya
+// limpia temporizadores/imágenes/gráficas) — esta prueba simula justo ese
+// patrón sin pasar por render.js.
+test("sin limpiar entre montajes, cada montarHistorial() deja su propia escucha (así se ve el defecto)", () => {
+  limpiarEscuchasHistorial();
+  const contenedor = document.createElement("div");
+  for (let i = 0; i < 5; i++) {
+    montarHistorial(contenedor, EJERCICIO, "kg"); // 5 "repintados" del mismo renglón
+  }
+  assertEq(_contarEscuchasHistorialParaPruebas(), 5, "cinco montajes sin limpiar, cinco escuchas acumuladas");
+  limpiarEscuchasHistorial();
+});
+
+test("limpiarEscuchasHistorial() vacía el registro por completo, incluso entre repintados", () => {
+  limpiarEscuchasHistorial();
+  const contenedor = document.createElement("div");
+  for (let i = 0; i < 5; i++) {
+    limpiarEscuchasHistorial(); // lo que render.js's pintarDia() hace antes de cada repintado
+    montarHistorial(contenedor, EJERCICIO, "kg");
+  }
+  assertEq(_contarEscuchasHistorialParaPruebas(), 1, "un repintado correcto nunca acumula más de una escucha viva por renglón montado");
+  limpiarEscuchasHistorial();
 });

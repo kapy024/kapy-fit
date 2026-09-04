@@ -11,7 +11,7 @@ import { formatear } from "./unidades.js";
 import {
   montarCampos, montarPalomita, montarTemporizador, montarHistorial,
   parseRestSeconds, clearAllTimers, crearAviso,
-  contarCompletados, reiniciarCompletadosDeHoy
+  contarCompletados, reiniciarCompletadosDeHoy, limpiarEscuchasHistorial
 } from "./registro.js";
 import { montarImagen, detenerTodasLasImagenes } from "./imagenes.js";
 import { detenerTodasLasGraficas } from "./graficas.js";
@@ -121,6 +121,12 @@ export function pintarDia(contenedor, claveDia, unidad, alReiniciar) {
   // when this function (not montarProgreso) is the one about to overwrite
   // their container.
   detenerTodasLasGraficas();
+  // Every montarHistorial() row about to be discarded (day switch, variant
+  // change, edit-mode toggle) registered a refresh callback instead of its
+  // own document listener (see registro.js's escuchasHistorial, I5 final-
+  // review brief) — this is what actually retires them, same family as the
+  // sweeps above.
+  limpiarEscuchasHistorial();
   // The variant selector rebuilds through this same function (see
   // `repintar` below) — a chip click leaves focus on a `.chip-btn` that
   // innerHTML = "" is about to destroy, same problem pintarNav has with the
