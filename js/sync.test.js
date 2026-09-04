@@ -9,7 +9,7 @@ import {
   _reiniciarEstadoParaPruebas
 } from "./sync.js";
 import {
-  guardarRegistro, registroDe, marcaDe, pendientes,
+  guardarRegistro, registroDe, marcaDe, pendientes, marcarAdopcionResuelta,
   LLAVE_REGISTROS, LLAVE_COLA, LLAVE_MARCAS
 } from "./almacen.js";
 
@@ -20,6 +20,13 @@ function limpiar() {
   localStorage.removeItem(LLAVE_COLA);
   localStorage.removeItem(LLAVE_MARCAS);
   _reiniciarEstadoParaPruebas();
+  // Estas son pruebas de sincronización genérica (reintento, conflictos,
+  // arranque de autosync) — la adopción del historial sin sesión (tarea 10)
+  // tiene su propia suite en adopcion.test.js. Sin esto, un guardarRegistro()
+  // hecho aquí antes de sincronizar() dispararía la compuerta de adopción
+  // (ver debeOfrecerAdopcion() en sync.js) y bloquearía subidas que estas
+  // pruebas dan por sentado que ocurren.
+  marcarAdopcionResuelta();
 }
 
 // Snapshots/restores the three keys almacen.js owns, to simulate switching
@@ -190,6 +197,18 @@ test("el estado recorre pendiente → sincronizando → al-dia", async () => {
   assertEq(secuencia, ["pendiente", "sincronizando", "al-dia"]);
 });
 
+// Nota (tarea 10): esta prueba asume que un pendiente ya en cola cuando
+// arranca el autosync sube sin más — cierto solo porque limpiar() (arriba)
+// marca la adopción como resuelta. Sin eso, este guardarRegistro() antes de
+// arrancar sería indistinguible de historial sin sesión sin adoptar, y la
+// compuerta de sincronizar() (ver debeOfrecerAdopcion() en sync.js) tendría
+// que bloquear justo esta subida hasta que se conteste — que es la regla
+// correcta, probada aparte en adopcion.test.js ("con la adopción sin
+// responder, la sincronización inicial de arrancarAutosync tampoco sube
+// nada al cargar la página"). Esta prueba, en cambio, es sobre el
+// mecanismo genérico de autosync (arranque inmediato + reintento al
+// reconectar), no sobre adopción, así que parte de un dispositivo sin
+// nada pendiente de adoptar.
 test("arrancarAutosync sincroniza de inmediato y otra vez al recuperar la red", async () => {
   limpiar();
   guardarRegistro(SLOT, reg("2026-09-02", "sentadilla", { pesoKg: 20 }));

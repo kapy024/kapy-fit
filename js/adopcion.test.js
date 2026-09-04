@@ -5,7 +5,7 @@
 import { test, assertEq } from "./pruebas.js";
 import {
   historialSinAdoptar, debeOfrecerAdopcion, aceptarAdopcion, rechazarAdopcion,
-  arrancarAutosync, _reiniciarEstadoParaPruebas
+  sincronizar, arrancarAutosync, _reiniciarEstadoParaPruebas
 } from "./sync.js";
 import {
   guardarRegistro, registroDe, pendientes, guardarPreferencias, adopcionResuelta,
@@ -115,19 +115,41 @@ test("aceptar marca la adopción como resuelta", async () => {
   assertEq(adopcionResuelta(), true);
 });
 
-// --- caso 3: rechazar no encola nada y no borra nada local ---
+// --- caso 3: rechazar saca de la cola lo que había, no encola nada nuevo,
+// y no borra nada local (defecto 1 de la tarea 10: antes rechazar apagaba
+// el ofrecimiento pero dejaba los pendientes en la cola, así que el
+// siguiente sincronizar() los subía igual — el "no" del usuario no se
+// sostenía) ---
 
-test("rechazar no encola nada nuevo y no borra el historial local", () => {
+test("rechazar saca de la cola los registros ofrecidos, sin encolar nada nuevo ni borrar el historial local", () => {
   limpiar();
   guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
   guardarRegistro(SLOT, reg("2026-09-02", { pesoKg: 21 }));
-  const pendientesAntes = pendientes().length;
+  assertEq(pendientes().length, 2, "los dos guardados quedan en cola, como cualquier guardarRegistro()");
 
   rechazarAdopcion();
 
-  assertEq(pendientes().length, pendientesAntes, "rechazar no agrega ni quita nada de la cola");
+  assertEq(pendientes().length, 0, "rechazar saca de la cola justo lo que había ofrecido: nada debe subirse después");
   assertEq(registroDe(SLOT, "2026-09-01").pesoKg, 20, "el registro sigue intacto en este dispositivo");
   assertEq(registroDe(SLOT, "2026-09-02").pesoKg, 21, "el registro sigue intacto en este dispositivo");
+});
+
+// El defecto real, de punta a punta: decir que no, y comprobar que ningún
+// sincronizar() posterior (autosync, 'online', o uno disparado a mano, como
+// aquí) sube esos registros — aunque la cola los tendría si rechazar no los
+// hubiera sacado.
+test("tras rechazar, un sincronizar() posterior no sube esos registros", async () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
+  rechazarAdopcion();
+
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+  const r = await sincronizar(depsConSesion({ cliente: async () => cliente }));
+
+  assertEq(llamadas.length, 0, "rechazar ya los sacó de la cola: sincronizar() no debe llamar a la red por ellos");
+  assertEq(r.enviados, 0);
+  assertEq(pendientes().length, 0);
+  assertEq(registroDe(SLOT, "2026-09-01").pesoKg, 20, "el registro local sigue intacto, solo que nunca se subió");
 });
 
 test("rechazar marca la adopción como resuelta", () => {
@@ -140,13 +162,18 @@ test("rechazar marca la adopción como resuelta", () => {
 
 // --- caso 4: una vez resuelto (aceptado o rechazado), no se vuelve a ofrecer ---
 
-test("tras rechazar no se vuelve a ofrecer, aunque siga habiendo historial sin subir", () => {
+test("tras rechazar no se vuelve a ofrecer, y el registro sigue existiendo aunque ya no esté en cola", () => {
   limpiar();
   guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
   rechazarAdopcion();
 
-  assertEq(historialSinAdoptar().length, 1, "el registro sigue sin subir");
-  assertEq(debeOfrecerAdopcion(), false, "pero ya no debe volver a ofrecerse");
+  // rechazarAdopcion() ya sacó ese registro de la cola (ver el caso 3 de
+  // arriba): historialSinAdoptar() cuenta pendientes, así que ahora reporta
+  // 0 — no queda nada más que ofrecer, no porque se haya subido, sino
+  // porque el usuario ya contestó que no.
+  assertEq(historialSinAdoptar().length, 0, "ya no hay nada pendiente que ofrecer: rechazar lo sacó de la cola");
+  assertEq(debeOfrecerAdopcion(), false, "y no debe volver a ofrecerse");
+  assertEq(registroDe(SLOT, "2026-09-01").pesoKg, 20, "el registro sigue existiendo en este dispositivo, solo que ya no en la cola de subida");
 });
 
 test("tras aceptar no se vuelve a ofrecer", async () => {
@@ -220,14 +247,19 @@ test("un inicio de sesión sin historial pendiente sincroniza normalmente, sin a
   }
 });
 
-test("resuelta la adopción, un siguiente inicio de sesión sí sincroniza lo que quedó en la cola", async () => {
+test("resuelta la adopción (rechazada), un registro nuevo posterior sí sincroniza normalmente", async () => {
   limpiar();
   guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
   rechazarAdopcion(); // el usuario ya contestó que no, antes de que arrancara el autosync
 
+  // Un registro creado DESPUÉS de contestar no es "lo anterior": la
+  // adopción ya está resuelta, así que debe subir por la cola normal, sin
+  // preguntar de nuevo (requisito 4 de la tarea 10).
+  guardarRegistro(SLOT, reg("2026-09-05", { pesoKg: 25 }));
+
   let listener = null;
   let avisos = 0;
-  const { cliente } = clienteQueAceptaTodo();
+  const { cliente, llamadas } = clienteQueAceptaTodo();
   const deps = {
     hayConfig: () => true,
     sesionActual: async () => ({ user: { id: "u1" } }),
@@ -242,8 +274,74 @@ test("resuelta la adopción, un siguiente inicio de sesión sí sincroniza lo qu
     await esperarMicrotareas();
 
     assertEq(avisos, 0, "ya se resolvió antes: no debe volver a avisar");
+    assertEq(llamadas.length, 1, "el registro posterior a la respuesta sí debe subir, sin preguntar");
     assertEq(pendientes().length, 0, "y el ciclo normal de sincronización sigue funcionando");
   } finally {
     detener();
   }
+});
+
+// --- defecto 2 de la tarea 10: la sincronización inicial (la que corre al
+// cargar la página con una sesión ya activa, sin ningún evento de inicio de
+// sesión de por medio) también debe respetar la compuerta — antes solo la
+// cubría el evento de inicio de sesión, así que bastaba recargar la página
+// con la oferta sin responder para que la cola se drenara igual ---
+
+test("con la adopción sin responder, sincronizar() no sube ese historial aunque ya haya sesión (recarga de página)", async () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
+  // Nunca se contesta la oferta (ni aceptar ni rechazar) — como si la
+  // página se hubiera recargado con la sesión ya activa antes de que
+  // apareciera la respuesta del usuario.
+  assertEq(debeOfrecerAdopcion(), true, "la oferta sigue sin contestar");
+
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+  const r = await sincronizar(depsConSesion({ cliente: async () => cliente }));
+
+  assertEq(llamadas.length, 0, "con la oferta sin responder, ninguna sincronización debe subir ese historial");
+  assertEq(r.enviados, 0);
+  assertEq(pendientes().length, 1, "sigue en la cola, listo para cuando se responda");
+});
+
+test("con la adopción sin responder, la sincronización inicial de arrancarAutosync tampoco sube nada al cargar la página", async () => {
+  limpiar();
+  guardarRegistro(SLOT, reg("2026-09-01", { pesoKg: 20 }));
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+  const deps = depsConSesion({ cliente: async () => cliente });
+
+  // arrancarAutosync(), sin alOfrecerAdopcion, simula exactamente la carga
+  // de página: sesión ya activa desde el arranque, ningún evento de
+  // inicio de sesión de por medio — solo la llamada inicial al final de
+  // arrancarAutosync().
+  const detener = arrancarAutosync(deps);
+  try {
+    await esperarMicrotareas();
+    assertEq(llamadas.length, 0, "la sincronización inicial de la carga no debe subir historial sin adoptar");
+    assertEq(pendientes().length, 1, "sigue en la cola, sin tocar");
+  } finally {
+    detener();
+  }
+});
+
+// --- requisito 4 de la tarea 10: un registro creado ya con sesión, sin
+// historial previo que adoptar, sube normal y sin preguntar ---
+
+test("un registro creado con sesión activa, sin historial previo que adoptar, sube normal sin preguntar", async () => {
+  limpiar();
+  const { cliente, llamadas } = clienteQueAceptaTodo();
+  const deps = depsConSesion({ cliente: async () => cliente });
+
+  // Primer sincronizar() con sesión y cola vacía: no hay nada que adoptar,
+  // así que la propia sincronización cierra la pregunta por su cuenta (ver
+  // sync.js) — nunca va a haber oferta que hacer en este dispositivo.
+  await sincronizar(deps);
+  assertEq(debeOfrecerAdopcion(), false, "sin historial previo, nunca hubo nada que ofrecer");
+
+  // Ahora, ya con sesión, se registra una serie nueva.
+  guardarRegistro(SLOT, reg("2026-09-03", { pesoKg: 30 }));
+  const r = await sincronizar(deps);
+
+  assertEq(llamadas.length, 1, "el registro nuevo debe subir por la cola normal, sin aviso de adopción");
+  assertEq(r.enviados, 1);
+  assertEq(pendientes().length, 0);
 });

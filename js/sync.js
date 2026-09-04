@@ -140,6 +140,25 @@ export async function sincronizar(deps = DEPENDENCIAS_REALES) {
     return { enviados: 0, fallidos: 0, detalle: "sin sesión" };
   }
 
+  // The offer to upload pre-session history (debeOfrecerAdopcion() below)
+  // must be the ONLY thing that ever drains those specific "registro"
+  // pendientes while it stands unanswered — never autosync, 'online', the
+  // sync that runs on page load with a session already active, or a
+  // sincronizar() triggered by saving another set. Every one of those paths
+  // calls this same function, so gating it here covers all of them at once
+  // instead of trusting each call site to remember. Nothing is lost: the
+  // queue is left exactly as it is, ready to drain the moment
+  // aceptarAdopcion()/rechazarAdopcion() settles the question.
+  if (debeOfrecerAdopcion()) {
+    fijarEstado("pendiente");
+    return { enviados: 0, fallidos: 0, detalle: "adopción de historial pendiente de respuesta" };
+  }
+  // Nothing left to ask about — either it was just resolved, or this
+  // session never had any pre-existing local history to begin with. Close
+  // the question for good so a record saved from here on is never mistaken
+  // for old history still awaiting an answer.
+  if (!adopcionResuelta()) marcarAdopcionResuelta();
+
   const cola = pendientes();
   if (cola.length === 0) {
     fijarEstado("al-dia");
@@ -317,9 +336,15 @@ export async function aceptarAdopcion(deps = DEPENDENCIAS_REALES) {
 }
 
 // Decline: enqueues nothing new and deletes nothing local — the history
-// stays exactly as it was, only on this device. This only records that the
-// question has been answered, so it stops being offered.
+// stays exactly as it was, only on this device, in localStorage. What it
+// DOES do is pull every "registro" pendiente currently offered back out of
+// the upload queue — otherwise the very next sincronizar() (autosync,
+// 'online', page load, anything) would upload them anyway, "no" or not.
+// This only ever removes queue entries (see almacen.js's quitarPendiente);
+// it never touches LLAVE_REGISTROS or LLAVE_MARCAS, so historial()/
+// registroDe() keep showing every one of these records exactly as before.
 export function rechazarAdopcion() {
+  for (const pendiente of historialSinAdoptar()) quitarPendiente(pendiente.id);
   marcarAdopcionResuelta();
 }
 
@@ -328,15 +353,17 @@ export function rechazarAdopcion() {
 let temporizador = null;
 
 // Wires sincronizar() to run on its own: right away (so a reload with a
-// pending queue and a live session starts draining without waiting), on
-// every sign-in, whenever the browser regains connectivity, and every 60
-// seconds while there's something queued. On sign-in and on the initial
-// call, descargar() follows right after sincronizar() — always in that
-// order: uploading first means the server never overwrites something this
-// device recorded offline before descargar() gets to compare it. Returns a
-// function that undoes all of it — tests must call it to avoid a stray
-// interval calling a fake client after the test that created it has
-// finished.
+// pending queue and a live session starts draining without waiting — unless
+// that queue is exactly the unresolved adoption offer, see sincronizar()'s
+// own debeOfrecerAdopcion() gate, which this initial call is bound by just
+// like every other route in), on every sign-in, whenever the browser
+// regains connectivity, and every 60 seconds while there's something
+// queued. On sign-in and on the initial call, descargar() follows right
+// after sincronizar() — always in that order: uploading first means the
+// server never overwrites something this device recorded offline before
+// descargar() gets to compare it. Returns a function that undoes all of
+// it — tests must call it to avoid a stray interval calling a fake client
+// after the test that created it has finished.
 //
 // `alOfrecerAdopcion`, if given, is called instead of sincronizar() the
 // moment a brand-new sign-in shows up with unresolved local history still
