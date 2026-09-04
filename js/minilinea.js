@@ -17,11 +17,10 @@
 // that's still allowed to combine slots — and even there, never into one
 // blended line (see its own header comment).
 import { historialDeSlot } from "./almacen.js";
-import { serieTemporal } from "./metricas.js";
+import { serieTemporal, MINIMO_PUNTOS_GRAFICA as MINIMO_PUNTOS } from "./metricas.js";
 import { formatear } from "./unidades.js";
 
 const VENTANA = 8;
-const MINIMO_PUNTOS = 2;
 // A move smaller than this fraction of the starting weight reads as noise,
 // not a trend — otherwise a 0.1 kg wobble between two sessions would call
 // itself "subiendo" or "bajando" just as loudly as a real 10 kg jump.

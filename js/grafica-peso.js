@@ -1,17 +1,19 @@
 // Body-weight chart: one line (palette slot 1) plus its own 4-week moving
-// average, dashed, same color — the "same smoothed entity" rule from
-// restricciones.md. Two series on one chart, so unlike
+// average, dashed, in that same color — a moving average is the same
+// underlying quantity smoothed, not a second, unrelated series, so it
+// never gets a color of its own. Two series on one chart, so unlike
 // grafica-ejercicio.js's single-series charts this one keeps a legend and
-// a direct label per line (the visualization rule for 2+ series).
+// a direct label per line (the project's rule for any chart with 2+
+// series).
 import { pesos, guardarPeso } from "./peso-corporal.js";
 import { hoyISO } from "./almacen.js";
 import { aKg, desdeKg } from "./unidades.js";
-import { promedioMovil, porSemana, semanaIsoDe } from "./metricas.js";
+import { promedioMovil, porSemana, semanaIsoDe, MINIMO_PUNTOS_GRAFICA as MINIMO_PUNTOS } from "./metricas.js";
 import { cargarChart, paleta, opcionesBase, registrarGrafica, destruirGrafica } from "./graficas.js";
 import { montarTabla } from "./tabla-datos.js";
 import { fechaAMs, formatearFechaCorta, pluginCrosshair } from "./grafica-ejercicio.js";
+import { crearAviso } from "./registro.js";
 
-const MINIMO_PUNTOS = 2;
 const VENTANA_PROMEDIO = 4;
 
 // Pure: {puntos, promedio, suficientes} for the whole body-weight history,
@@ -195,9 +197,7 @@ function pintarCaptura(unidad, alGuardar) {
   boton.className = "reset-btn";
   boton.textContent = "Guardar";
 
-  const aviso = document.createElement("span");
-  aviso.className = "save-warn";
-  aviso.hidden = true;
+  const aviso = crearAviso();
 
   boton.addEventListener("click", () => {
     const texto = input.value.trim();

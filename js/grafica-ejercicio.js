@@ -1,17 +1,15 @@
 // Per-exercise charts: weight lifted and training volume, drawn as two
 // charts stacked on a shared date axis — never two Y axes on one chart,
 // since kg (peso) and kg×series×reps (volumen) live on wildly different
-// scales (22 vs 1,320 — see restricciones.md). Reuses every calculation
-// from js/metricas.js; this module only shapes historial() records into
-// chart input and draws them.
+// scales (22 vs 1,320) that a shared axis would flatten one of into a
+// straight line. Reuses every calculation from js/metricas.js; this module
+// only shapes historial() records into chart input and draws them.
 import { historial } from "./almacen.js";
 import { desdeKg } from "./unidades.js";
-import { volumen, serieTemporal } from "./metricas.js";
+import { volumen, serieTemporal, MINIMO_PUNTOS_GRAFICA as MINIMO_PUNTOS } from "./metricas.js";
 import { cargarChart, paleta, opcionesBase, registrarGrafica } from "./graficas.js";
 import { montarTabla } from "./tabla-datos.js";
 import { etiquetaSlot } from "./rutina.js";
-
-const MINIMO_PUNTOS = 2;
 
 // Groups historial(slug) records by the slot they came from, in the order
 // each slot first appears (historial() itself is fecha-ascending, so that's
@@ -34,7 +32,9 @@ function porSlot(registros) {
 // final-review brief: a 40->50 kg heavy-slot progression plotted next to a
 // same-day 20 kg light-slot entry drew as a single falling line). `peso` is
 // converted to `unidad` for display; `volumen` is always computed in kg and
-// never follows the selector (restricciones.md). A record missing what
+// never follows the selector — kg is the canonical storage unit, and
+// volumen is a training-load number nobody reads in pounds, so converting
+// it would only invite confusing it with a weight. A record missing what
 // volumen() needs simply contributes no volumen point, same as
 // datosDeEjercicio() below.
 function datosDeSlot({ slot, registros }, unidad) {
@@ -64,7 +64,7 @@ export function datosPorSlot(slug, unidad) {
 // never share one line here (see datosPorSlot() above and montarGraficaEjercicio()
 // below). `peso` is converted to `unidad` for display; `volumen` is always
 // computed in kg and never follows the selector (a design rule, not an
-// oversight — see restricciones.md). `suficientes` gates the whole
+// oversight — see datosDeSlot() above). `suficientes` gates the whole
 // component on the primary series (peso): with fewer than 2 weight points
 // there's nothing worth drawing, whatever volumen happens to have.
 export function datosDeEjercicio(slug, unidad) {
@@ -79,10 +79,10 @@ export function datosDeEjercicio(slug, unidad) {
 // --- dibujo (Chart.js/DOM — no cubierto por las pruebas puras de arriba) ---
 
 // "YYYY-MM-DD" -> epoch ms at UTC midnight. Chart.js's "time" scale needs
-// a date-adapter package this app doesn't load (one more CDN dependency
-// restricciones.md deliberately avoids); a plain numeric x-axis fed real
-// timestamps gives the same real-date spacing — a skipped week leaves a
-// visible gap — without it.
+// a date-adapter package this app deliberately doesn't load (one more CDN
+// dependency this project avoids on principle); a plain numeric x-axis fed
+// real timestamps gives the same real-date spacing — a skipped week leaves
+// a visible gap — without it.
 export function fechaAMs(fecha) {
   return Date.parse(`${fecha}T00:00:00Z`);
 }
@@ -231,10 +231,10 @@ async function dibujarBloque(contenedorPadre, { titulo, series, columnaValor }) 
 // Mounts the two stacked charts (peso arriba, volumen abajo) plus their
 // tables into `contenedor`, replacing whatever it held. With fewer than 2
 // weight points draws nothing but a message saying how many are missing —
-// a one-point chart communicates less than no chart at all
-// (restricciones.md). Volumen is drawn only when it independently clears
-// the same 2-point bar; a set with non-numeric reps (no volumen at all)
-// still gets its peso chart, just no volumen block underneath.
+// a one-point chart communicates less than no chart at all, so this
+// project never draws one. Volumen is drawn only when it independently
+// clears the same 2-point bar; a set with non-numeric reps (no volumen at
+// all) still gets its peso chart, just no volumen block underneath.
 export async function montarGraficaEjercicio(contenedor, slug, unidad) {
   contenedor.innerHTML = "";
   const datos = datosDeEjercicio(slug, unidad);
@@ -253,8 +253,9 @@ export async function montarGraficaEjercicio(contenedor, slug, unidad) {
   contenedor.appendChild(wrap);
 
   const p = paleta();
-  // "Máximo 3 series por gráfica" (restricciones.md): today's routine never
-  // puts one slug in more than 2 slots (día 1's light/heavy press militar,
+  // Every chart in this app caps out at 3 series, one per validated
+  // palette color: today's routine never puts one slug in more than 2
+  // slots (día 1's light/heavy press militar,
   // día 5's repeated remo), but a future substitution history could in
   // principle add a third — capping here means a chart never silently grows
   // past the validated palette instead of enforcing the limit by accident.

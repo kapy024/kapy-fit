@@ -3,6 +3,14 @@
 // input-to-output transform so it can be tested without a browser.
 import { aNumeroONull } from "./unidades.js";
 
+// The project-wide "fewer than 2 points, draw nothing" rule — a one-point
+// chart communicates less than no chart at all, so this app never draws
+// one. Shared by every chart component instead of each declaring its own
+// copy — this was the same literal `2` in three files (grafica-ejercicio.js,
+// grafica-peso.js, minilinea.js) that a future change to the rule would
+// have had to remember to update in all three.
+export const MINIMO_PUNTOS_GRAFICA = 2;
+
 // Extracts the first number that appears in a free-text reps string
 // ("10 der / 15 izq" -> 10, "hasta 1 min continuo" -> 1). Reuses
 // aNumeroONull for the actual text-to-number conversion (comma decimals,

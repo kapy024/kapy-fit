@@ -746,13 +746,16 @@
     font-style:italic;
     margin:0 0 12px;
   }
-  .grafica-bloque table{
+  /* Compartida por .grafica-bloque (grafica-ejercicio.js) y .grafica-peso
+     (grafica-peso.js) — la misma tabla de datos, con la misma pinta, en
+     los dos componentes; nunca declarada dos veces. */
+  .grafica-bloque table, .grafica-peso table{
     width:100%;
     border-collapse:collapse;
     font-size:12.5px;
     font-variant-numeric:tabular-nums;
   }
-  .grafica-bloque caption{
+  .grafica-bloque caption, .grafica-peso caption{
     text-align:left;
     font-size:11px;
     font-weight:700;
@@ -761,34 +764,14 @@
     color:var(--text-dim);
     padding-bottom:6px;
   }
-  .grafica-bloque th, .grafica-bloque td{
+  .grafica-bloque th, .grafica-bloque td, .grafica-peso th, .grafica-peso td{
     text-align:left;
     padding:5px 8px;
     border-bottom:1px solid var(--border);
   }
 
   /* --- gráfica de peso corporal (tarea 5): reusa .grafica-lienzo/
-     .grafica-vacia/.grafica-nota de arriba; esto es lo que le falta. --- */
-  .grafica-peso table{
-    width:100%;
-    border-collapse:collapse;
-    font-size:12.5px;
-    font-variant-numeric:tabular-nums;
-  }
-  .grafica-peso caption{
-    text-align:left;
-    font-size:11px;
-    font-weight:700;
-    text-transform:uppercase;
-    letter-spacing:.04em;
-    color:var(--text-dim);
-    padding-bottom:6px;
-  }
-  .grafica-peso th, .grafica-peso td{
-    text-align:left;
-    padding:5px 8px;
-    border-bottom:1px solid var(--border);
-  }
+     .grafica-vacia/.grafica-nota/la tabla de arriba en su totalidad. --- */
   .peso-captura{
     display:flex;
     align-items:flex-end;
