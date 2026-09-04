@@ -22,6 +22,11 @@ export const LLAVE_MIGRACION = "hierro3:migracion";
 // decide what to clear, so a corrupted or missing value can't affect a
 // reset itself.
 export const LLAVE_ULTIMO_RESET = "hierro3:ultimoReset";
+// Pending Supabase writes, queued here — not sent — so a write always
+// finishes as soon as it lands on disk, with no dependency on the network
+// being up. sync.js is the only reader/drainer of this queue; almacen.js
+// only ever appends to it and removes items sync.js confirms as sent.
+export const LLAVE_COLA = "hierro3:cola";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -127,7 +132,14 @@ export function guardarRegistro(slot, registro) {
   if (i >= 0) lista[i] = registro;
   else lista.push(registro);
   todo[slot] = lista;
-  return escribirJSON(LLAVE_REGISTROS, todo);
+  const ok = escribirJSON(LLAVE_REGISTROS, todo);
+  // Only a write that actually persisted gets queued — queuing a write that
+  // never landed would leave a pending item pointing at a record the app
+  // can't show, a ghost sync.js would dutifully upload with no local trace.
+  if (ok) {
+    encolar({ tipo: "registro", entidad: "exercise_logs", datos: { slot, ...registro } });
+  }
+  return ok;
 }
 
 // Returns every localStorage key matching `patron` with its raw string
@@ -172,7 +184,12 @@ export function preferencias() {
 // Merges `prefs` into the saved preferences and persists the result.
 // Returns true if the write persisted, false if storage refused it.
 export function guardarPreferencias(prefs) {
-  return escribirJSON(LLAVE_PREFS, { ...preferencias(), ...prefs });
+  const siguiente = { ...preferencias(), ...prefs };
+  const ok = escribirJSON(LLAVE_PREFS, siguiente);
+  if (ok) {
+    encolar({ tipo: "preferencias", entidad: "profiles", datos: { unidad: siguiente.unidad } });
+  }
+  return ok;
 }
 
 // Whether the legacy-import banner has already been resolved — either the
@@ -199,4 +216,62 @@ export function ultimoReinicio() {
 // storage refused it — same contract as every other write here.
 export function guardarUltimoReinicio() {
   return escribirJSON(LLAVE_ULTIMO_RESET, new Date().toISOString());
+}
+
+// --- cola de pendientes (ver sync.js, que la drena) ---
+
+function generarIdPendiente() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Fallback for an environment with no crypto.randomUUID (old WebKit) —
+  // still unique enough for a client-only queue id that's never compared
+  // across devices.
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// The identity a pending operation targets, used to REPLACE instead of
+// accumulate: two saves of the same slot+date during one workout must leave
+// one pending write, not one per keystroke. An operation with no known
+// identity (none exist today besides these two) falls back to null, which
+// encolar() treats as "always append" rather than risk collapsing two
+// unrelated writes into one.
+function claveLogicaPendiente(pendiente) {
+  if (pendiente.tipo === "registro") {
+    return `registro:${pendiente.datos.slot}:${pendiente.datos.fecha}`;
+  }
+  if (pendiente.tipo === "preferencias") {
+    return "preferencias";
+  }
+  return null;
+}
+
+// Queues `operacion` ({tipo, entidad, datos}) for sync.js to send later.
+// Assigns the id (callers never invent their own), and replaces — not
+// appends to — any existing pending entry with the same logical key, so
+// the queue stays bounded no matter how long the same field gets edited.
+// Returns the id of the (possibly replacing) queued entry.
+export function encolar(operacion) {
+  const cola = leerJSON(LLAVE_COLA, []);
+  const clave = claveLogicaPendiente(operacion);
+  const sinDuplicado = clave == null ? cola : cola.filter((p) => claveLogicaPendiente(p) !== clave);
+  const id = generarIdPendiente();
+  sinDuplicado.push({ ...operacion, id });
+  escribirJSON(LLAVE_COLA, sinDuplicado);
+  return id;
+}
+
+// Every pending operation, oldest first — the order sync.js sends them in.
+export function pendientes() {
+  const cola = leerJSON(LLAVE_COLA, []);
+  return Array.isArray(cola) ? cola : [];
+}
+
+// Removes the pending operation `id` once sync.js confirms it was sent.
+// Returns true if persisted, false if storage refused it — same contract
+// as every other write here; sync.js keeps the item queued for a later
+// retry in that case, same as it would for a failed send.
+export function quitarPendiente(id) {
+  const restante = pendientes().filter((p) => p.id !== id);
+  return escribirJSON(LLAVE_COLA, restante);
 }
