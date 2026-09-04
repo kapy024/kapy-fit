@@ -108,9 +108,69 @@ async function enviarOperacion(c, userId, op) {
     );
     return { error };
   }
+  if (op.tipo === "rutina_bloque") {
+    const { diaClave, bloqueClave, ejercicios } = op.datos;
+    return enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios);
+  }
   // An operation type this build of sync.js doesn't know how to send yet
   // must never jam the queue forever behind it — drop it as if it had
   // succeeded rather than retry something that can never work.
+  return { error: null };
+}
+
+// Uploads one block's edited exercise list to routine_exercises. Unlike
+// exercise_logs, a routine_exercises row is never identified by anything the
+// client invents — its `id` lives only server-side, in the row that
+// 004_clonado.sql created for this user when their account was set up — so
+// the block's existing rows are looked up fresh by (día, bloque) every time,
+// scoped to THIS user's own routine (never the shared template, user_id
+// null) by requiring the join to `routines` to match `userId` — RLS enforces
+// the same thing server-side, this just avoids updating zero rows silently
+// when the join simply finds nothing.
+//
+// Editing never creates or removes days/blocks (see editor-rutina.js), and
+// never adds a slot to a block either — only "quitar" shrinks it — so the
+// diff against what the server already has is always: update every row the
+// edited list still covers (rows are addressed by position, not by slot,
+// since a substitution or reorder is exactly what changes a row's slot/slug
+// out from under it), then delete whatever row is left over past the end of
+// the edited list. This never touches exercise_logs — that table has no
+// foreign key into routine_exercises at all — so history for a slot that
+// just got substituted or removed is untouched on the server, same as it is
+// locally (see almacen.js's guardarEdicionBloque).
+async function enviarEdicionBloque(c, userId, diaClave, bloqueClave, ejercicios) {
+  const { data: filaBloque, error: errorBloque } = await c
+    .from("routine_blocks")
+    .select("id, routine_exercises(id, posicion), routine_days!inner(clave, routines!inner(user_id))")
+    .eq("clave", bloqueClave)
+    .eq("routine_days.clave", diaClave)
+    .eq("routine_days.routines.user_id", userId)
+    .single();
+  if (errorBloque) return { error: errorBloque };
+  if (!filaBloque) return { error: new Error(`bloque no encontrado en la nube: ${diaClave}:${bloqueClave}`) };
+
+  const filas = [...(filaBloque.routine_exercises || [])].sort((a, b) => a.posicion - b.posicion);
+
+  for (let i = 0; i < ejercicios.length; i++) {
+    const fila = filas[i];
+    if (!fila) break; // no debería pasar: editar nunca agrega ejercicios a un bloque
+    const e = ejercicios[i];
+    const { error } = await c.from("routine_exercises").update({
+      exercise_slug: e.slug,
+      slot: e.slot,
+      posicion: i + 1,
+      series: e.series,
+      reps: e.reps,
+      peso_objetivo_kg: e.pesoKg,
+      descanso: e.descanso,
+      nota: e.nota
+    }).eq("id", fila.id);
+    if (error) return { error };
+  }
+  for (let i = ejercicios.length; i < filas.length; i++) {
+    const { error } = await c.from("routine_exercises").delete().eq("id", filas[i].id);
+    if (error) return { error };
+  }
   return { error: null };
 }
 

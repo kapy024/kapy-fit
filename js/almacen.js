@@ -39,6 +39,14 @@ export const LLAVE_COLA = "hierro3:cola";
 // record that arrives FROM the server is stamped with the server's own
 // `updated_at` instead, so a later download compares like with like.
 export const LLAVE_MARCAS = "hierro3:marcas";
+// Local overrides for the user's own routine (see editor-rutina.js): peso
+// objetivo/series/reps, substitution, order and removal within a block —
+// never new days or blocks, those don't exist here. Keyed by
+// "<diaClave>:<bloqueClave>", each value the block's full ordered exercise
+// list as it stands after editing. A block absent from this object simply
+// has no override yet; rutina.js's built-in definition stands as-is until
+// the user changes it.
+export const LLAVE_EDICIONES_RUTINA = "hierro3:edicionesRutina";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -247,6 +255,37 @@ export function guardarPreferencias(prefs) {
   return ok;
 }
 
+// Returns every saved block override, as { "<dia>:<bloque>": [ {slug,
+// series, reps, pesoKg, descanso, nota, slot}, ... ] }. Defaults to `{}`,
+// same defense against a corrupted (non-plain-object) value as
+// preferencias() above.
+export function edicionesRutina() {
+  const leido = leerJSON(LLAVE_EDICIONES_RUTINA, {});
+  return esObjetoPlano(leido) ? leido : {};
+}
+
+// Persists the full ordered exercise list for one block — editor-rutina.js
+// computes it (slot included) after every edit: change target
+// peso/series/reps, substitute, reorder or remove — and queues the same
+// change for Supabase's routine_exercises (see sync.js's enviarOperacion,
+// tipo "rutina_bloque"). Never touches LLAVE_REGISTROS/exercise_logs: a
+// routine edit reshapes the plan, it never deletes a set that actually
+// happened. Returns true if the write persisted, false if storage refused
+// it — same contract as every other write here.
+export function guardarEdicionBloque(diaClave, bloqueClave, ejercicios) {
+  const todo = edicionesRutina();
+  todo[`${diaClave}:${bloqueClave}`] = ejercicios;
+  const ok = escribirJSON(LLAVE_EDICIONES_RUTINA, todo);
+  if (ok) {
+    encolar({
+      tipo: "rutina_bloque",
+      entidad: "routine_exercises",
+      datos: { diaClave, bloqueClave, ejercicios }
+    });
+  }
+  return ok;
+}
+
 // Whether the legacy-import banner has already been resolved — either the
 // user imported, or explicitly dismissed it. Defaults to false (never
 // resolved) so a fresh install still offers the import once.
@@ -311,6 +350,9 @@ function claveLogicaPendiente(pendiente) {
   }
   if (pendiente.tipo === "preferencias") {
     return "preferencias";
+  }
+  if (pendiente.tipo === "rutina_bloque") {
+    return `rutina_bloque:${pendiente.datos.diaClave}:${pendiente.datos.bloqueClave}`;
   }
   return null;
 }

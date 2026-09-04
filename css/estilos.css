@@ -638,3 +638,45 @@
     /* Same iOS zoom-on-focus issue as .f-input above. */
     .sesion-input{font-size:16px; min-width:0; flex:1 1 160px}
   }
+
+  /* --- edición de la rutina propia (tarea 11) --- */
+  .edit-toggle-btn[aria-pressed="true"]{
+    background:var(--accent);
+    color:var(--accent-ink);
+    border-color:var(--accent);
+  }
+
+  li.ex.ex-edit{
+    align-items:flex-end;
+    gap:10px 14px;
+  }
+  .field-sustituir{min-width:150px; flex:1 1 150px}
+  select.f-sel{
+    width:100%;
+    padding:6px 7px;
+    font-family:inherit;
+  }
+  .ex-edit-acciones{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    margin-left:auto;
+  }
+  /* 24×24 minimum tap target, same reasoning as .check-wrap above. */
+  .ex-edit-icon{
+    min-width:24px;
+    min-height:24px;
+    padding:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .ex-edit-icon:disabled{opacity:.35; cursor:default}
+  .ex-edit-quitar:hover{color:var(--accent); border-color:var(--accent)}
+
+  @media (max-width:520px){
+    li.ex.ex-edit{gap:8px 10px}
+    .field-sustituir{flex:1 1 100%}
+    /* Same iOS zoom-on-focus reasoning as the base .f-input rule. */
+    select.f-sel{font-size:16px}
+  }
