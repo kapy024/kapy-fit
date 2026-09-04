@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>Pruebas — Registro de Hierro</title>
+<!-- graficas.js's paleta() reads the --viz-1/2/3 (and --text/--border/
+     --surface) custom properties off :root, so its test needs the real
+     stylesheet loaded, not just the inline styles above. -->
+<link rel="stylesheet" href="./css/estilos.css">
 <style>
   body { font-family: ui-monospace, monospace; padding: 24px; line-height: 1.6; }
   .pasa  { color: #1baf7a; }
@@ -32,6 +36,7 @@
   await import("./js/adopcion.test.js");
   await import("./js/editor-rutina.test.js");
   await import("./js/metricas.test.js");
+  await import("./js/graficas.test.js");
   await correr();
 </script>
 </body>

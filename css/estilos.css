@@ -13,6 +13,13 @@
     --moss-ink:#FFFFFF;
     --ring:#B8451D55;
     --shadow: 0 1px 2px rgba(33,29,24,.06), 0 6px 20px rgba(33,29,24,.06);
+    /* Paleta de gráficas (entrega 3) — valores validados contra contraste y
+       daltonismo, no elegidos a ojo (ver restricciones.md). El aqua
+       (--viz-3) queda bajo 3:1 de contraste en modo claro: toda serie que
+       lo use lleva etiqueta directa, nunca solo el color. */
+    --viz-1:#2a78d6;
+    --viz-2:#eb6834;
+    --viz-3:#1baf7a;
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
@@ -28,6 +35,9 @@
       --moss-ink:#12140F;
       --ring:#E27E4355;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+      --viz-1:#3987e5;
+      --viz-2:#d95926;
+      --viz-3:#199e70;
     }
   }
   :root[data-theme="dark"]{
@@ -43,6 +53,9 @@
     --moss-ink:#12140F;
     --ring:#E27E4355;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    --viz-1:#3987e5;
+    --viz-2:#d95926;
+    --viz-3:#199e70;
   }
 
   *{box-sizing:border-box}
