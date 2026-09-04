@@ -6,7 +6,7 @@
 // Every network dependency is injected (see DEPENDENCIAS_REALES below),
 // the same seam sesion-ui.js uses for auth.js/db.js — sync.test.js passes
 // a double instead, so these tests never touch the real network.
-import { pendientes, quitarPendiente } from "./almacen.js";
+import { pendientes, quitarPendiente, registroDe, marcaDe, aplicarRegistroRemoto } from "./almacen.js";
 import { cliente, hayConfig } from "./db.js";
 import { sesionActual, alCambiarSesion } from "./auth.js";
 
@@ -157,6 +157,96 @@ export async function sincronizar(deps = DEPENDENCIAS_REALES) {
   return { enviados, fallidos, detalle: errores.length ? errores.join("; ") : "ok" };
 }
 
+// --- descarga inicial ---
+
+// The identity descargar() uses to match a server row to a local one and
+// to a queued upload: slot + fecha, same pair `unique (user_id, slot,
+// logged_on)` protects server-side.
+function claveFila(slot, fecha) {
+  return `${slot}|${fecha}`;
+}
+
+// Pulls every exercise_logs row belonging to the signed-in user and merges
+// each one into local storage. Never throws — same contract as
+// sincronizar(): no config, no session, a network error, or a rejected
+// query is reported in the return value, never as an exception.
+//
+// Three rules, in order, decide each row:
+//   1. A (slot, fecha) still in the upload queue is never overwritten —
+//      what hasn't gone up yet is newer than anything the server has, by
+//      definition (see almacen.js's cola).
+//   2. Otherwise, a row with no local counterpart is simply written down.
+//   3. Otherwise, both sides have it: compare the local mark (see
+//      almacen.js's marcaDe(), stamped at write time — local time for a
+//      local write, the server's own updated_at for a previously
+//      downloaded one) against this row's `updated_at`. The more recent
+//      one wins; a local record with no mark at all (written before this
+//      feature existed) is treated as older than anything on the server,
+//      so upgrading a device still pulls its account's full history down.
+// Nothing is ever deleted here — a losing side is only ever overwritten by
+// a *newer* value, never by an older or equal one, so no confirmed write
+// disappears in favor of stale data.
+export async function descargar(deps = DEPENDENCIAS_REALES) {
+  const { hayConfig: hayConf, cliente: obtenerCliente, sesionActual: leerSesion } = deps;
+
+  if (!hayConf()) return { traidos: 0, detalle: "sin configuración" };
+
+  let sesion = null;
+  try {
+    sesion = await leerSesion();
+  } catch (_e) {
+    sesion = null;
+  }
+  if (!sesion || !sesion.user) return { traidos: 0, detalle: "sin sesión" };
+
+  let c;
+  try {
+    c = await obtenerCliente();
+  } catch (e) {
+    return { traidos: 0, detalle: mensajeDeError(e) };
+  }
+
+  let filas;
+  try {
+    const { data, error } = await c.from("exercise_logs").select("*").eq("user_id", sesion.user.id);
+    if (error) return { traidos: 0, detalle: mensajeDeError(error) };
+    filas = Array.isArray(data) ? data : [];
+  } catch (e) {
+    return { traidos: 0, detalle: mensajeDeError(e) };
+  }
+
+  const enCola = new Set(
+    pendientes()
+      .filter((p) => p.tipo === "registro")
+      .map((p) => claveFila(p.datos.slot, p.datos.fecha))
+  );
+
+  let traidos = 0;
+  for (const fila of filas) {
+    const slot = fila.slot;
+    const fecha = fila.logged_on;
+    if (enCola.has(claveFila(slot, fecha))) continue; // regla 1: lo local sin subir gana
+
+    const local = registroDe(slot, fecha);
+    if (local) {
+      const marcaLocal = marcaDe(slot, fecha);
+      if (marcaLocal && new Date(marcaLocal) >= new Date(fila.updated_at)) continue; // regla 3: local gana
+    }
+
+    const registro = {
+      fecha,
+      slug: fila.exercise_slug,
+      pesoKg: fila.weight_kg,
+      series: fila.sets,
+      reps: fila.reps,
+      hecho: fila.completed
+    };
+    if (aplicarRegistroRemoto(slot, registro, fila.updated_at)) traidos++;
+  }
+
+  return { traidos, detalle: "ok" };
+}
+
 // --- arranque automático ---
 
 let temporizador = null;
@@ -164,15 +254,19 @@ let temporizador = null;
 // Wires sincronizar() to run on its own: right away (so a reload with a
 // pending queue and a live session starts draining without waiting), on
 // every sign-in, whenever the browser regains connectivity, and every 60
-// seconds while there's something queued. Returns a function that undoes
-// all of it — tests must call it to avoid a stray interval calling a fake
-// client after the test that created it has finished.
+// seconds while there's something queued. On sign-in and on the initial
+// call, descargar() follows right after sincronizar() — always in that
+// order: uploading first means the server never overwrites something this
+// device recorded offline before descargar() gets to compare it. Returns a
+// function that undoes all of it — tests must call it to avoid a stray
+// interval calling a fake client after the test that created it has
+// finished.
 export function arrancarAutosync(deps = DEPENDENCIAS_REALES) {
   const manejarOnline = () => { sincronizar(deps); };
   window.addEventListener("online", manejarOnline);
 
   const desuscribirSesion = deps.alCambiarSesion((sesion) => {
-    if (sesion) sincronizar(deps);
+    if (sesion) sincronizar(deps).then(() => descargar(deps));
   });
 
   if (temporizador) clearInterval(temporizador);
@@ -180,7 +274,7 @@ export function arrancarAutosync(deps = DEPENDENCIAS_REALES) {
     if (pendientes().length > 0) sincronizar(deps);
   }, 60000);
 
-  sincronizar(deps);
+  sincronizar(deps).then(() => descargar(deps));
 
   return function detenerAutosync() {
     window.removeEventListener("online", manejarOnline);

@@ -27,6 +27,13 @@ export const LLAVE_ULTIMO_RESET = "hierro3:ultimoReset";
 // being up. sync.js is the only reader/drainer of this queue; almacen.js
 // only ever appends to it and removes items sync.js confirms as sent.
 export const LLAVE_COLA = "hierro3:cola";
+// One timestamp per (slot, fecha), used only to resolve download conflicts
+// (see sync.js's descargar()) — never shown in the UI and never part of the
+// record shape historial()/registroDe() return, so it can't change what
+// those already-tested reads look like. A local write stamps "now"; a
+// record that arrives FROM the server is stamped with the server's own
+// `updated_at` instead, so a later download compares like with like.
+export const LLAVE_MARCAS = "hierro3:marcas";
 
 function leerJSON(llave, porOmision) {
   try {
@@ -118,27 +125,70 @@ export function registroDe(slot, fecha) {
   return historialDeSlot(slot).find((r) => r.fecha === fecha) ?? null;
 }
 
-// Replaces the record for `registro.fecha` under `slot` entirely (no
-// merge with the previous record — the whole point of overwriting is that
-// stale fields from a prior save don't survive), or appends it if that
-// date has no record yet. `registro` is expected to carry its `slug`, so
-// historial(slug) can find it later. Returns true if the write persisted,
-// false if storage refused it (quota full or private mode); the caller
-// decides how to tell the user, this function never throws for that case.
-export function guardarRegistro(slot, registro) {
+// Shared by guardarRegistro() and aplicarRegistroRemoto(): replaces the
+// record for `registro.fecha` under `slot` entirely (no merge with the
+// previous record — the whole point of overwriting is that stale fields
+// from a prior save don't survive), or appends it if that date has no
+// record yet.
+function escribirRegistro(slot, registro) {
   const todo = leerJSON(LLAVE_REGISTROS, {});
   const lista = Array.isArray(todo[slot]) ? todo[slot] : [];
   const i = lista.findIndex((r) => r.fecha === registro.fecha);
   if (i >= 0) lista[i] = registro;
   else lista.push(registro);
   todo[slot] = lista;
-  const ok = escribirJSON(LLAVE_REGISTROS, todo);
-  // Only a write that actually persisted gets queued — queuing a write that
-  // never landed would leave a pending item pointing at a record the app
-  // can't show, a ghost sync.js would dutifully upload with no local trace.
+  return escribirJSON(LLAVE_REGISTROS, todo);
+}
+
+function claveMarca(slot, fecha) {
+  return `${slot}|${fecha}`;
+}
+
+// The local timestamp for (slot, fecha), or null if never marked (a record
+// that predates this feature, or one this device has never written or
+// downloaded). sync.js's descargar() compares this against the server's
+// `updated_at` to decide who wins a download conflict.
+export function marcaDe(slot, fecha) {
+  const marcas = leerJSON(LLAVE_MARCAS, {});
+  const valor = marcas[claveMarca(slot, fecha)];
+  return typeof valor === "string" ? valor : null;
+}
+
+function marcarLocal(slot, fecha, iso) {
+  const marcas = leerJSON(LLAVE_MARCAS, {});
+  marcas[claveMarca(slot, fecha)] = iso;
+  escribirJSON(LLAVE_MARCAS, marcas);
+}
+
+// Replaces the record for `registro.fecha` under `slot` (see
+// escribirRegistro()). `registro` is expected to carry its `slug`, so
+// historial(slug) can find it later. Returns true if the write persisted,
+// false if storage refused it (quota full or private mode); the caller
+// decides how to tell the user, this function never throws for that case.
+export function guardarRegistro(slot, registro) {
+  const ok = escribirRegistro(slot, registro);
+  // Only a write that actually persisted gets marked and queued — queuing
+  // a write that never landed would leave a pending item pointing at a
+  // record the app can't show, a ghost sync.js would dutifully upload with
+  // no local trace.
   if (ok) {
+    marcarLocal(slot, registro.fecha, new Date().toISOString());
     encolar({ tipo: "registro", entidad: "exercise_logs", datos: { slot, ...registro } });
   }
+  return ok;
+}
+
+// Writes a record that came FROM the server (sync.js's descargar()), not
+// from something the user just did here — so, unlike guardarRegistro(),
+// it is never queued for re-upload: uploading back a row that only just
+// arrived from the server would be redundant at best. The local mark is
+// stamped with the server's own `updated_at` (not "now"), so the next
+// download compares this record against the server on equal footing
+// instead of always looking artificially fresh. Same persisted/not-
+// persisted return contract as every other write here.
+export function aplicarRegistroRemoto(slot, registro, marcaServidor) {
+  const ok = escribirRegistro(slot, registro);
+  if (ok) marcarLocal(slot, registro.fecha, marcaServidor);
   return ok;
 }
 
