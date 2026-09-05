@@ -12,7 +12,10 @@
 import { create, getNumericDate } from "https://deno.land/x/djwt@v2.9.1/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const JWT_SECRET = Deno.env.get("SUPABASE_JWT_SECRET")!;
+// El CLI de Supabase rechaza cualquier secreto con prefijo SUPABASE_ (está
+// reservado para lo que inyecta automáticamente: SUPABASE_URL,
+// SUPABASE_SERVICE_ROLE_KEY, etc.) — de ahí el nombre sin ese prefijo.
+const JWT_SECRET = Deno.env.get("PROJECT_JWT_SECRET")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
