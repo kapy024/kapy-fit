@@ -1,7 +1,10 @@
-// Pruebas del exportador (tarea 4 de la migración de proyecto). Corren con
-// `node --test scripts/migracion/exportar.test.mjs` — sin dependencias, sin
-// tocar la red: cada caso pasa un fetch doble. Este runner es solo para los
-// scripts de scripts/migracion/; tests.html y js/ siguen con pruebas.js.
+// Pruebas del exportador (tarea 4 de la migración de proyecto). Corren junto
+// con las del importador, nombrando ambos archivos de forma explícita (sin
+// package.json, `node --test scripts/migracion/` falla con MODULE_NOT_FOUND):
+// `node --test scripts/migracion/exportar.test.mjs scripts/migracion/importar.test.mjs`
+// Sin dependencias, sin tocar la red: cada caso pasa un fetch doble. Este
+// runner es solo para los scripts de scripts/migracion/; tests.html y js/
+// siguen con pruebas.js.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";

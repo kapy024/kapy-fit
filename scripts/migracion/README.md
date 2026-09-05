@@ -18,6 +18,20 @@ RLS ya limita cada tabla al dueño por `auth.uid()`/`id = auth.uid()` en
 ambos proyectos, así que en cada paso basta con el `access_token` propio del
 dueño — nunca la `service_role key`.
 
+## 0. Correr las pruebas
+
+Sin dependencias, sin tocar la red — cada prueba pasa su propio `fetch`
+doble. Nombra los dos archivos de forma explícita:
+
+```bash
+node --test scripts/migracion/exportar.test.mjs scripts/migracion/importar.test.mjs
+```
+
+`node --test scripts/migracion/` (la carpeta, sin nombrar los archivos)
+**no funciona**: sin `package.json` en el repo, Node intenta resolver la
+carpeta como módulo y falla con `MODULE_NOT_FOUND` en vez de correr las
+pruebas. Usa siempre la forma explícita de arriba.
+
 ## 1. Exportar del proyecto viejo
 
 ### 1.1 Sacar el token

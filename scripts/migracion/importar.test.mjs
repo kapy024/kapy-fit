@@ -1,8 +1,11 @@
-// Pruebas del importador (tarea 5 de la migración de proyecto). Corren con
-// `node --test scripts/migracion/importar.test.mjs` — sin dependencias, sin
-// tocar la red: cada caso pasa un fetch doble con un backend en memoria que
-// imita las reglas reales de subir_registro_ejercicio/subir_peso_corporal
-// (escritura condicional por editado_en) y del PATCH sobre profiles.
+// Pruebas del importador (tarea 5 de la migración de proyecto). Corren junto
+// con las del exportador, nombrando ambos archivos de forma explícita (sin
+// package.json, `node --test scripts/migracion/` falla con MODULE_NOT_FOUND):
+// `node --test scripts/migracion/exportar.test.mjs scripts/migracion/importar.test.mjs`
+// Sin dependencias, sin tocar la red: cada caso pasa un fetch doble con un
+// backend en memoria que imita las reglas reales de
+// subir_registro_ejercicio/subir_peso_corporal (escritura condicional por
+// editado_en) y del PATCH sobre profiles.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
