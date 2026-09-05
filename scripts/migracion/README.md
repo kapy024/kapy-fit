@@ -110,22 +110,20 @@ que existir ya:
 
 Esto es lo que el brief de esta tarea no resuelve solo: `config.js` en este
 repo (y en la copia publicada en GitHub Pages) **todavía apunta al proyecto
-viejo**, así que no basta con repetir el truco de la sección 1.1 ahí. Dos
-formas de conseguir un `TOKEN` real del proyecto nuevo:
+viejo**, así que no basta con repetir el truco de la sección 1.1 ahí. La
+única vía práctica, sin la `service_role key` (el panel de Supabase no deja
+generar una sesión real desde Authentication sin ella):
 
-- **Copia local con `config.js` temporal.** En una copia de trabajo de este
-  repo (no la que se publica), cambia `SUPABASE_URL`/`SUPABASE_ANON_KEY` en
-  `config.js` a los del proyecto nuevo, abre la app así modificada, que el
-  dueño inicie sesión (esto además dispara el punto anterior: se le clona
-  su `profiles`), y saca el token con el mismo snippet de la sección 1.1.
-  Revierte el cambio a `config.js` al terminar — no se commitea.
-- **Desde el editor SQL → Authentication del proyecto nuevo.** El panel de
-  Supabase permite crear/gestionar el usuario del dueño y generar una
-  sesión sin tocar ningún `config.js`; el `access_token` de esa sesión
-  sirve igual.
+**Copia local con `config.js` temporal.** En una copia de trabajo de este
+repo (no la que se publica), cambia `SUPABASE_URL`/`SUPABASE_ANON_KEY` en
+`config.js` a los del proyecto nuevo, abre la app así modificada, que el
+dueño inicie sesión (esto además dispara el punto anterior: se le clona su
+`profiles`), y saca el token con el mismo snippet de la sección 1.1.
+**Revierte el cambio a `config.js` en cuanto tengas el token — ese
+`config.js` temporal nunca se commitea.**
 
-Cualquiera de las dos requiere que el dueño ya tenga cuenta en el proyecto
-nuevo — créala primero si no existe.
+Requiere que el dueño ya tenga cuenta en el proyecto nuevo — créala primero
+si no existe.
 
 ### 3.2 Correr el importador
 
