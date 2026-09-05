@@ -132,3 +132,10 @@ Si editas un módulo y las pruebas no parecen reflejar el cambio, es casi
 siempre caché del navegador sobre el grafo de módulos ES — no basta con
 recargar; sirve la app desde un puerto nuevo (`python3 -m http.server
 <otro-puerto>`) o fuerza la recarga sin caché.
+
+## Cuenta y base de datos
+
+La app usa el **mismo proyecto de Supabase que kapy024.com**, para que iniciar
+sesión en la zona privada del sitio baste también aquí. Solo puede registrarse
+quien esté en la lista de invitados de ese proyecto; la copia de GitHub Pages
+apunta a la misma base y sirve para pruebas con la cuenta del dueño.
