@@ -7,3 +7,7 @@ config.local.js
 .claude/
 .claude-flow/
 .worktrees/
+# Datos reales del dueño exportados durante la migración de proyecto
+# (scripts/migracion/exportar.mjs). Nunca entran al repo público; se borran
+# al confirmar la migración.
+scripts/migracion/datos/
