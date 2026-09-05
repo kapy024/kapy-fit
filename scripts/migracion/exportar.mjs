@@ -75,14 +75,33 @@ async function traerTabla({ fetchImpl, url, anonKey, token, tabla }) {
   return filas;
 }
 
+// Renders one field for a fingerprint string. null/undefined are written as
+// the literal word "null" — never "0" or "" — so a missing weight can never
+// be confused with an actual zero when two fingerprints are compared.
+const formatearCampo = (v) => (v === null || v === undefined ? "null" : String(v));
+
 // The block a future importer will cross-check against what it sees in the
-// new project: row counts, weight sums, and the slot|logged_on keys so any
-// mismatch can be tracked down to a specific record.
+// new project: row counts, weight sums, the slot|logged_on keys, and a
+// per-row fingerprint of every field PostgREST could silently swap or drop
+// (weight_kg, sets, reps, completed for exercise_logs; weight_kg for
+// body_weight) so any mismatch — even one that leaves the row count and the
+// weight sum untouched, like two rows' weights swapped — can be tracked down
+// to a specific record.
 export function calcularConteos({ exercise_logs, body_weight, profiles }) {
   const sumaPeso = (filas) =>
     filas.reduce((acc, f) => acc + (typeof f.weight_kg === "number" ? f.weight_kg : 0), 0);
   const claves = exercise_logs
     .map((f) => `${f.slot}|${f.logged_on}`)
+    .sort();
+  const huellasEjercicio = exercise_logs
+    .map((f) =>
+      [f.slot, f.logged_on, f.weight_kg, f.sets, f.reps, f.completed]
+        .map(formatearCampo)
+        .join("|")
+    )
+    .sort();
+  const huellasPeso = body_weight
+    .map((f) => [f.measured_on, f.weight_kg].map(formatearCampo).join("|"))
     .sort();
   return {
     exercise_logs: exercise_logs.length,
@@ -91,6 +110,8 @@ export function calcularConteos({ exercise_logs, body_weight, profiles }) {
     suma_peso_exercise_logs: sumaPeso(exercise_logs),
     suma_peso_body_weight: sumaPeso(body_weight),
     claves_exercise_logs: claves,
+    huellas_exercise_logs: huellasEjercicio,
+    huellas_body_weight: huellasPeso,
   };
 }
 

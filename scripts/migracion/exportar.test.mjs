@@ -81,6 +81,11 @@ test("escribe el JSON con los conteos correctos", async () => {
       "dia6:v2:press|2026-09-01",
       "dia6:v2:sentadilla|2026-09-01",
     ],
+    huellas_exercise_logs: [
+      "dia6:v2:press|2026-09-01|20|null|null|null",
+      "dia6:v2:sentadilla|2026-09-01|40|null|null|null",
+    ],
+    huellas_body_weight: ["2026-09-01|70.5"],
   });
 
   await rm(dir, { recursive: true, force: true });
@@ -170,6 +175,45 @@ test("una lista de 1500 filas se pagina completa", async () => {
   assert.equal(contenido.conteos.suma_peso_exercise_logs, total);
 
   await rm(dir, { recursive: true, force: true });
+});
+
+test("calcularConteos escribe null literal en las huellas, nunca 0 ni vacío (I1)", async () => {
+  const { calcularConteos } = await import("./exportar.mjs");
+  const conteos = calcularConteos({
+    exercise_logs: [
+      {
+        slot: "dia1:v1:sentadilla",
+        logged_on: "2026-09-01",
+        weight_kg: null,
+        sets: 3,
+        reps: "10,10,10",
+        completed: false,
+      },
+      {
+        slot: "dia1:v1:press",
+        logged_on: "2026-09-01",
+        weight_kg: 0,
+        sets: 3,
+        reps: "10,10,10",
+        completed: true,
+      },
+    ],
+    body_weight: [],
+    profiles: [],
+  });
+
+  assert.ok(
+    conteos.huellas_exercise_logs.includes(
+      "dia1:v1:sentadilla|2026-09-01|null|3|10,10,10|false"
+    )
+  );
+  assert.ok(
+    conteos.huellas_exercise_logs.includes(
+      "dia1:v1:press|2026-09-01|0|3|10,10,10|true"
+    )
+  );
+  // null y 0 nunca deben producir la misma huella.
+  assert.notEqual(conteos.huellas_exercise_logs[0], conteos.huellas_exercise_logs[1]);
 });
 
 test("falta una variable de entorno: mensaje claro y código distinto de 0", async () => {

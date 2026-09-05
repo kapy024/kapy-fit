@@ -467,3 +467,227 @@ test("una RPC que falla a medias detiene la subida y da un resumen inequívoco (
 
   await rm(dir, { recursive: true, force: true });
 });
+
+// --- I1: el cotejo por huellas detecta lo que conteos/sumas/claves no ven ---
+// En cada caso el destino ya trae una fila "corrupta" con un editado_en más
+// nuevo que el del archivo, así la RPC la rechaza (aplicado:false, como si
+// viniera de una corrida anterior) y el valor problemático queda plantado
+// para el cotejo final — exactamente el escenario que debe detectar.
+
+test("pesos intercambiados: mismos conteos y sumas, pero se detecta por huellas (I1)", async () => {
+  const dir = await dirTemporal();
+  const datos = datosDeEjemplo(); // sentadilla=40, press=20, misma suma total=60
+  const ruta = await escribirEntrada(dir, datos);
+  const { fetchDoble, estado } = crearBackend({ profiles: [{ id: ID_DUENO, unidad: "lb" }] });
+  const editadoMasNuevo = "2026-09-03T00:00:00.000Z";
+  // Destino ya tiene ambas filas, pero con los pesos INTERCAMBIADOS.
+  estado.exercise_logs.push(
+    {
+      id: randomUUID(),
+      user_id: ID_DUENO,
+      slot: "dia6:v2:sentadilla",
+      exercise_slug: "sentadilla",
+      logged_on: "2026-09-01",
+      weight_kg: 20, // debería ser 40
+      sets: 3,
+      reps: "10,10,8",
+      completed: true,
+      editado_en: editadoMasNuevo,
+    },
+    {
+      id: randomUUID(),
+      user_id: ID_DUENO,
+      slot: "dia6:v2:press",
+      exercise_slug: "press-banca",
+      logged_on: "2026-09-01",
+      weight_kg: 40, // debería ser 20
+      sets: 4,
+      reps: "8,8,8,6",
+      completed: true,
+      editado_en: editadoMasNuevo,
+    }
+  );
+  const mensajes = [];
+
+  const codigo = await importar({
+    argv: ["node", "importar.mjs", ruta],
+    env: ENV_BASE,
+    fetchImpl: fetchDoble,
+    log: (m) => mensajes.push(m),
+    error: (m) => mensajes.push(`ERROR: ${m}`),
+  });
+
+  assert.equal(codigo, 1);
+  // Los conteos numéricos y la suma siguen cuadrando (por eso hace falta la huella).
+  assert.ok(mensajes.some((m) => m.includes("suma_peso_exercise_logs") && m.includes("sí")));
+  assert.ok(mensajes.some((m) => m.includes("huellas_exercise_logs") && m.includes("NO")));
+  assert.ok(mensajes.some((m) => m.includes("dia6:v2:sentadilla|2026-09-01")));
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("completed invertido en una fila se detecta por huellas (I1)", async () => {
+  const dir = await dirTemporal();
+  const datos = datosDeEjemplo();
+  const ruta = await escribirEntrada(dir, datos);
+  const { fetchDoble, estado } = crearBackend({ profiles: [{ id: ID_DUENO, unidad: "lb" }] });
+  estado.exercise_logs.push({
+    id: randomUUID(),
+    user_id: ID_DUENO,
+    slot: "dia6:v2:sentadilla",
+    exercise_slug: "sentadilla",
+    logged_on: "2026-09-01",
+    weight_kg: 40,
+    sets: 3,
+    reps: "10,10,8",
+    completed: false, // invertido: el archivo trae true
+    editado_en: "2026-09-03T00:00:00.000Z",
+  });
+  const mensajes = [];
+
+  const codigo = await importar({
+    argv: ["node", "importar.mjs", ruta],
+    env: ENV_BASE,
+    fetchImpl: fetchDoble,
+    log: (m) => mensajes.push(m),
+    error: (m) => mensajes.push(`ERROR: ${m}`),
+  });
+
+  assert.equal(codigo, 1);
+  assert.ok(mensajes.some((m) => m.includes("huellas_exercise_logs") && m.includes("NO")));
+  assert.ok(mensajes.some((m) => m.includes("dia6:v2:sentadilla|2026-09-01")));
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("reps vaciado en una fila se detecta por huellas (I1)", async () => {
+  const dir = await dirTemporal();
+  const datos = datosDeEjemplo();
+  const ruta = await escribirEntrada(dir, datos);
+  const { fetchDoble, estado } = crearBackend({ profiles: [{ id: ID_DUENO, unidad: "lb" }] });
+  estado.exercise_logs.push({
+    id: randomUUID(),
+    user_id: ID_DUENO,
+    slot: "dia6:v2:press",
+    exercise_slug: "press-banca",
+    logged_on: "2026-09-01",
+    weight_kg: 20,
+    sets: 4,
+    reps: "", // vaciado: el archivo trae "8,8,8,6"
+    completed: true,
+    editado_en: "2026-09-03T00:00:00.000Z",
+  });
+  const mensajes = [];
+
+  const codigo = await importar({
+    argv: ["node", "importar.mjs", ruta],
+    env: ENV_BASE,
+    fetchImpl: fetchDoble,
+    log: (m) => mensajes.push(m),
+    error: (m) => mensajes.push(`ERROR: ${m}`),
+  });
+
+  assert.equal(codigo, 1);
+  assert.ok(mensajes.some((m) => m.includes("huellas_exercise_logs") && m.includes("NO")));
+  assert.ok(mensajes.some((m) => m.includes("dia6:v2:press|2026-09-01")));
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("null en weight_kg no se confunde con 0: se detecta por huellas (I1)", async () => {
+  const dir = await dirTemporal();
+  const exercise_logs = [
+    {
+      user_id: "id-en-el-proyecto-viejo",
+      slot: "dia6:v2:plancha",
+      exercise_slug: "plancha",
+      logged_on: "2026-09-01",
+      weight_kg: null, // ejercicio sin peso registrado
+      sets: 3,
+      reps: "60,60,60",
+      completed: true,
+      editado_en: "2026-09-01T12:00:00.000Z",
+    },
+  ];
+  const body_weight = [];
+  const profiles = [{ id: "id-en-el-proyecto-viejo", unidad: "lb" }];
+  const datos = {
+    exercise_logs,
+    body_weight,
+    profiles,
+    conteos: calcularConteos({ exercise_logs, body_weight, profiles }),
+  };
+  const ruta = await escribirEntrada(dir, datos);
+  const { fetchDoble, estado } = crearBackend({ profiles: [{ id: ID_DUENO, unidad: "lb" }] });
+  // Destino ya trae 0 en vez de null, con editado_en más nuevo.
+  estado.exercise_logs.push({
+    id: randomUUID(),
+    user_id: ID_DUENO,
+    slot: "dia6:v2:plancha",
+    exercise_slug: "plancha",
+    logged_on: "2026-09-01",
+    weight_kg: 0,
+    sets: 3,
+    reps: "60,60,60",
+    completed: true,
+    editado_en: "2026-09-03T00:00:00.000Z",
+  });
+  const mensajes = [];
+
+  const codigo = await importar({
+    argv: ["node", "importar.mjs", ruta],
+    env: ENV_BASE,
+    fetchImpl: fetchDoble,
+    log: (m) => mensajes.push(m),
+    error: (m) => mensajes.push(`ERROR: ${m}`),
+  });
+
+  assert.equal(codigo, 1);
+  // La suma de pesos sigue cuadrando (null y 0 suman igual) — solo la huella lo ve.
+  assert.ok(mensajes.some((m) => m.includes("suma_peso_exercise_logs") && m.includes("sí")));
+  assert.ok(mensajes.some((m) => m.includes("huellas_exercise_logs") && m.includes("NO")));
+  assert.ok(mensajes.some((m) => m.includes("|null") || m.includes("null|")));
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("archivo exportado sin huellas (versión anterior) se rechaza sin cotejar a medias (I1)", async () => {
+  const dir = await dirTemporal();
+  const { exercise_logs, body_weight, profiles } = datosDeEjemplo();
+  // Simula un JSON exportado con la versión vieja: conteos sin huellas_*.
+  const datos = {
+    exercise_logs,
+    body_weight,
+    profiles,
+    conteos: {
+      exercise_logs: exercise_logs.length,
+      body_weight: body_weight.length,
+      profiles: profiles.length,
+      suma_peso_exercise_logs: 60,
+      suma_peso_body_weight: 70.5,
+      claves_exercise_logs: ["dia6:v2:press|2026-09-01", "dia6:v2:sentadilla|2026-09-01"],
+      // huellas_exercise_logs / huellas_body_weight ausentes a propósito.
+    },
+  };
+  const ruta = await escribirEntrada(dir, datos);
+  let llamadasFetch = 0;
+  const fetchDoble = async () => {
+    llamadasFetch++;
+    throw new Error("no debería llamarse a la red");
+  };
+  const mensajes = [];
+
+  const codigo = await importar({
+    argv: ["node", "importar.mjs", ruta],
+    env: ENV_BASE,
+    fetchImpl: fetchDoble,
+    log: (m) => mensajes.push(m),
+    error: (m) => mensajes.push(`ERROR: ${m}`),
+  });
+
+  assert.equal(codigo, 1);
+  assert.equal(llamadasFetch, 0); // se rechazó antes de tocar la red
+  assert.ok(mensajes.some((m) => m.includes("versión anterior") && m.includes("re-exporta") || m.includes("Vuelve a exportarlo")));
+
+  await rm(dir, { recursive: true, force: true });
+});

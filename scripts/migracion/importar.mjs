@@ -101,13 +101,36 @@ function diferenciaSimetrica(a, b) {
   };
 }
 
+// Compares two sorted fingerprint lists (calcularConteos' huellas_*) field
+// by field, keyed by each fingerprint's leading fields (slot|logged_on for
+// exercise_logs, measured_on for body_weight — `camposClave` says how many).
+// This is what catches content that a bare row-count or weight-sum comparison
+// can't: two rows' weights swapped, sets/reps/completed changed, or a null
+// that collapsed into a 0 — because the fingerprint for that exact key
+// changes even when totals stay the same.
+function analizarDiferenciasHuellas(origenLista, destinoLista, camposClave) {
+  const clave = (h) => h.split("|").slice(0, camposClave).join("|");
+  const mapaOrigen = new Map(origenLista.map((h) => [clave(h), h]));
+  const mapaDestino = new Map(destinoLista.map((h) => [clave(h), h]));
+  const todasLasClaves = [...new Set([...mapaOrigen.keys(), ...mapaDestino.keys()])].sort();
+  const diferencias = [];
+  for (const k of todasLasClaves) {
+    const o = mapaOrigen.get(k);
+    const d = mapaDestino.get(k);
+    if (o !== d) diferencias.push({ clave: k, origen: o ?? "(no existe)", destino: d ?? "(no existe)" });
+  }
+  return diferencias;
+}
+
 // Compares the exporter's `conteos` block (origen) against the same block
 // recomputed from what actually landed in the new project (destino, built
 // with the exporter's own calcularConteos so both sides are counted
 // identically). Returns one row per field for the printed table plus a
 // single `iguales` verdict that decides the exit code — this is what makes
 // the table's outcome unambiguous instead of something the reader has to
-// eyeball.
+// eyeball. Row counts and weight sums stay in the table because they are
+// legible at a glance; the per-row fingerprints (huellas_*) are the actual
+// guarantee — they catch swapped values that leave every sum untouched.
 function compararConteos(origen, destino) {
   const camposNumericos = [
     "exercise_logs",
@@ -135,10 +158,40 @@ function compararConteos(origen, destino) {
     coincide: clavesCoinciden,
   });
 
+  const huellasOrigenEjercicio = origen.huellas_exercise_logs ?? [];
+  const huellasDestinoEjercicio = destino.huellas_exercise_logs ?? [];
+  const huellasEjercicioCoinciden =
+    huellasOrigenEjercicio.length === huellasDestinoEjercicio.length &&
+    huellasOrigenEjercicio.every((h, i) => h === huellasDestinoEjercicio[i]);
+  filas.push({
+    campo: "huellas_exercise_logs",
+    origen: `${huellasOrigenEjercicio.length} huellas`,
+    destino: `${huellasDestinoEjercicio.length} huellas`,
+    coincide: huellasEjercicioCoinciden,
+  });
+
+  const huellasOrigenPeso = origen.huellas_body_weight ?? [];
+  const huellasDestinoPeso = destino.huellas_body_weight ?? [];
+  const huellasPesoCoinciden =
+    huellasOrigenPeso.length === huellasDestinoPeso.length &&
+    huellasOrigenPeso.every((h, i) => h === huellasDestinoPeso[i]);
+  filas.push({
+    campo: "huellas_body_weight",
+    origen: `${huellasOrigenPeso.length} huellas`,
+    destino: `${huellasDestinoPeso.length} huellas`,
+    coincide: huellasPesoCoinciden,
+  });
+
   return {
     filas,
     iguales: filas.every((f) => f.coincide),
     diferenciasClaves: clavesCoinciden ? null : diferenciaSimetrica(clavesOrigen, clavesDestino),
+    diferenciasHuellasEjercicio: huellasEjercicioCoinciden
+      ? null
+      : analizarDiferenciasHuellas(huellasOrigenEjercicio, huellasDestinoEjercicio, 2),
+    diferenciasHuellasPeso: huellasPesoCoinciden
+      ? null
+      : analizarDiferenciasHuellas(huellasOrigenPeso, huellasDestinoPeso, 1),
   };
 }
 
@@ -151,6 +204,17 @@ function imprimirTabla(filas, log) {
   log(col("campo", 26) + col("origen", 14) + col("destino", 14) + "coincide");
   for (const f of filas) {
     log(col(f.campo, 26) + col(f.origen, 14) + col(f.destino, 14) + (f.coincide ? "sí" : "NO"));
+  }
+}
+
+// When a huellas_* field doesn't match, prints how many rows differ and the
+// first three (origen vs destino) so the owner can find the exact row by
+// hand instead of just knowing "something" is off.
+function imprimirDiferenciasHuellas(campo, diferencias, log) {
+  if (!diferencias || diferencias.length === 0) return;
+  log(`${campo}: ${diferencias.length} huella(s) difieren. Primeras 3:`);
+  for (const d of diferencias.slice(0, 3)) {
+    log(`  ${d.clave} -> origen: ${d.origen} ; destino: ${d.destino}`);
   }
 }
 
@@ -321,6 +385,20 @@ export async function importar({
     return 1;
   }
 
+  // Archivos exportados antes de I1 no traen huellas_exercise_logs ni
+  // huellas_body_weight — sin ellas el cotejo final solo vería conteos y
+  // sumas, ciego a filas con contenido intercambiado. Se rechaza aquí, antes
+  // de subir un solo registro, en vez de cotejar a medias al final.
+  const conteosOrigen = datos.conteos ?? {};
+  if (!Array.isArray(conteosOrigen.huellas_exercise_logs) || !Array.isArray(conteosOrigen.huellas_body_weight)) {
+    error(
+      "Este archivo fue exportado con una versión anterior de exportar.mjs " +
+        "(sin huellas por fila) y no se puede cotejar de forma confiable. " +
+        "Vuelve a exportarlo con la versión actual antes de importar."
+    );
+    return 1;
+  }
+
   // El `user_id` que trae el archivo es el del proyecto VIEJO y nunca se
   // usa aquí: ver el comentario al inicio del archivo.
   const registros = datos.exercise_logs ?? [];
@@ -380,7 +458,8 @@ export async function importar({
       profiles: destProfiles,
     });
 
-    const { filas, iguales, diferenciasClaves } = compararConteos(datos.conteos ?? {}, conteosDestino);
+    const { filas, iguales, diferenciasClaves, diferenciasHuellasEjercicio, diferenciasHuellasPeso } =
+      compararConteos(conteosOrigen, conteosDestino);
     log("");
     imprimirTabla(filas, log);
 
@@ -389,6 +468,8 @@ export async function importar({
         log(`Solo en origen: ${JSON.stringify(diferenciasClaves.soloOrigen)}`);
         log(`Solo en destino: ${JSON.stringify(diferenciasClaves.soloDestino)}`);
       }
+      imprimirDiferenciasHuellas("huellas_exercise_logs", diferenciasHuellasEjercicio, log);
+      imprimirDiferenciasHuellas("huellas_body_weight", diferenciasHuellasPeso, log);
       error(
         "Los conteos NO cuadran — no se sigue adelante (no se toca config.js, no se pasa a tarea 6)."
       );

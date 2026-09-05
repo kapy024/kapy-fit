@@ -64,7 +64,14 @@ nuevo va a cotejar después:
 - `suma_peso_exercise_logs`, `suma_peso_body_weight`: la suma de
   `weight_kg` de cada tabla;
 - `claves_exercise_logs`: la lista ordenada de `slot|logged_on` de cada
-  registro, para ubicar cualquiera que no cuadre.
+  registro, para ubicar cualquiera que no cuadre;
+- `huellas_exercise_logs`/`huellas_body_weight`: una huella por fila
+  (`slot|logged_on|weight_kg|sets|reps|completed` y `measured_on|weight_kg`
+  respectivamente, con `null` siempre escrito como la palabra `null`, nunca
+  como `0` ni vacío). Esto es lo que detecta, por ejemplo, dos filas con los
+  pesos intercambiados: los conteos y las sumas cuadran igual, pero la huella
+  de cada fila no. Un archivo exportado con una versión anterior (sin estas
+  huellas) es rechazado por `importar.mjs` — hay que volver a exportarlo.
 
 Si algún conteo no coincide después de importar, la migración se detiene
 ahí — no se sigue adelante con un conteo que no cuadra.
@@ -147,13 +154,19 @@ El script:
   suma_peso_exercise_logs   60            60            sí
   suma_peso_body_weight     70.5          70.5          sí
   claves_exercise_logs      2 claves      2 claves      sí
+  huellas_exercise_logs     2 huellas     2 huellas     sí
+  huellas_body_weight       1 huellas     1 huellas     sí
   ```
 
   Cada fila es un campo del bloque `conteos` de la sección 1.3 —
   `exercise_logs`/`body_weight`/`profiles` son cuántas filas hay de cada
-  tabla, las dos sumas son de `weight_kg`, y `claves_exercise_logs` compara
-  la lista completa de `slot|logged_on` (no solo el conteo): si difiere,
-  el script imprime además cuáles claves sobran de un lado o del otro.
+  tabla, las dos sumas son de `weight_kg`, `claves_exercise_logs` compara
+  la lista completa de `slot|logged_on` (no solo el conteo), y
+  `huellas_exercise_logs`/`huellas_body_weight` comparan la huella completa
+  de cada fila (todos los campos, no solo la clave y el peso). Si alguna de
+  las dos listas de claves o de huellas difiere, el script imprime además
+  cuáles sobran de un lado o del otro — para huellas, cuántas difieren y las
+  tres primeras (origen vs destino) para ubicar la fila a mano.
 
 - si **cualquier** fila de la tabla dice `NO`, el código de salida es
   distinto de 0 y el mensaje final lo dice explícito. Eso es lo que decide
