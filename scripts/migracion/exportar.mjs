@@ -49,8 +49,11 @@ export function decodificarJwt(token) {
 
 // Fetches every row of `tabla` from PostgREST, paginating with Range so a
 // table past PostgREST's default 1000-row cap still comes back whole.
-// `order=id.asc` keeps page boundaries stable across requests.
-async function traerTabla({ fetchImpl, url, anonKey, token, tabla }) {
+// `order=id.asc` keeps page boundaries stable across requests. Exported so
+// importar.mjs can reuse it against the destination project instead of
+// keeping its own copy — RLS scopes every row to whoever signs `token` on
+// either side, so the same function works unmodified for both directions.
+export async function traerTabla({ fetchImpl, url, anonKey, token, tabla }) {
   const filas = [];
   let desde = 0;
   for (;;) {

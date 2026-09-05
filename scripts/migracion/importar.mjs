@@ -15,9 +15,7 @@
 // pass in — nothing here inspects or rewrites any id from the file.
 
 import { readFile } from "node:fs/promises";
-import { decodificarJwt, ErrorToken, calcularConteos } from "./exportar.mjs";
-
-const LIMITE_PAGINA = 1000; // Same PostgREST default the exporter pages around.
+import { decodificarJwt, ErrorToken, calcularConteos, traerTabla } from "./exportar.mjs";
 
 // Calls one PostgREST RPC with the owner's token and returns its parsed
 // JSON body (for subir_registro_ejercicio/subir_peso_corporal this is a
@@ -58,36 +56,6 @@ async function llamarRpc({ fetchImpl, url, anonKey, token, fn, body }) {
     throw new Error(`PostgREST respondió ${resp.status} en rpc/${fn}: ${cuerpo}`);
   }
   return resp.json();
-}
-
-// Pagination twin of exportar.mjs's traerTabla, kept local instead of
-// imported: it always targets the DESTINATION project (to count what
-// actually landed there), while the exporter's version always targets the
-// source. Same reasoning applies — RLS scopes every row to whoever signs
-// `token`, so this never filters by user_id either.
-async function traerTabla({ fetchImpl, url, anonKey, token, tabla }) {
-  const filas = [];
-  let desde = 0;
-  for (;;) {
-    const hasta = desde + LIMITE_PAGINA - 1;
-    const resp = await fetchImpl(`${url}/rest/v1/${tabla}?select=*&order=id.asc`, {
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${token}`,
-        Range: `${desde}-${hasta}`,
-      },
-    });
-    if (resp.status === 401) throw new ErrorToken();
-    if (!resp.ok) {
-      const cuerpo = await resp.text();
-      throw new Error(`PostgREST respondió ${resp.status} en ${tabla}: ${cuerpo}`);
-    }
-    const lote = await resp.json();
-    filas.push(...lote);
-    if (lote.length < LIMITE_PAGINA) break;
-    desde += LIMITE_PAGINA;
-  }
-  return filas;
 }
 
 // Elements only in `a`, and elements only in `b` — used to point at exactly
