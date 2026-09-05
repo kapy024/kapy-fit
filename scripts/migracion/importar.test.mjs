@@ -405,3 +405,65 @@ test("sin fila en profiles en destino: avisa y sigue con los registros", async (
 
   await rm(dir, { recursive: true, force: true });
 });
+
+test("una RPC que falla a medias detiene la subida y da un resumen inequívoco (C1)", async () => {
+  const dir = await dirTemporal();
+  const registros = Array.from({ length: 8 }, (_, i) => ({
+    user_id: "id-en-el-proyecto-viejo",
+    slot: `dia1:v1:ejercicio-${i}`,
+    exercise_slug: `ejercicio-${i}`,
+    logged_on: "2026-09-01",
+    weight_kg: 10 + i,
+    sets: 3,
+    reps: "10,10,10",
+    completed: true,
+    editado_en: `2026-09-01T12:0${i}:00.000Z`,
+  }));
+  const datos = {
+    exercise_logs: registros,
+    body_weight: [],
+    profiles: [],
+    conteos: calcularConteos({ exercise_logs: registros, body_weight: [], profiles: [] }),
+  };
+  const ruta = await escribirEntrada(dir, datos);
+  const { fetchDoble } = crearBackend({ profiles: [{ id: ID_DUENO, unidad: "kg" }] });
+
+  // El registro 5 de 8 (índice 4) revienta con un 500 de PostgREST.
+  let llamadasRpc = 0;
+  const fetchQueFalla = async (url, opciones) => {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/rpc/subir_registro_ejercicio")) {
+      llamadasRpc++;
+      if (llamadasRpc === 5) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ message: "error interno de prueba" }),
+          text: async () => JSON.stringify({ message: "error interno de prueba" }),
+        };
+      }
+    }
+    return fetchDoble(url, opciones);
+  };
+  const mensajes = [];
+  const errores = [];
+
+  const codigo = await importar({
+    argv: ["node", "importar.mjs", ruta],
+    env: ENV_BASE,
+    fetchImpl: fetchQueFalla,
+    log: (m) => mensajes.push(m),
+    error: (m) => errores.push(m),
+  });
+
+  assert.equal(codigo, 1);
+  assert.equal(llamadasRpc, 5); // se detuvo: no siguió con los registros 6, 7 y 8
+  assert.ok(errores.some((m) => m.includes("4") && m.includes("aplicados")));
+  assert.ok(errores.some((m) => m.includes("dia1:v1:ejercicio-4|2026-09-01")));
+  assert.ok(errores.some((m) => m.includes("error interno de prueba")));
+  assert.ok(errores.some((m) => m.includes("Re-correr") && m.includes("seguro")));
+  // Ningún mensaje debe traer un stack trace crudo (rastro de "at ... (archivo:línea)").
+  assert.ok(!errores.some((m) => /\bat .*:\d+:\d+/.test(m)));
+
+  await rm(dir, { recursive: true, force: true });
+});

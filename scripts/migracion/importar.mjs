@@ -24,6 +24,24 @@ const LIMITE_PAGINA = 1000; // Same PostgREST default the exporter pages around.
 // single {aplicado, fila} object — the functions return one composite row,
 // not a set). Throws ErrorToken on 401 so callers can tell an expired or
 // invalid token apart from any other failure.
+// Thrown when a row upload fails for any reason other than an expired token
+// (that's ErrorToken, handled separately so the caller can tell them apart).
+// Carries enough context — which table, which row index, that row's key, and
+// how much had already landed before the failure — so importar() can print
+// an unambiguous summary instead of letting the raw cause (and its stack)
+// reach the terminal.
+class ErrorSubida extends Error {
+  constructor({ tabla, indice, clave, aplicados, rechazadosPorAntiguedad, causa }) {
+    super(`falló la subida de ${tabla} en el índice ${indice} (${clave}): ${causa.message}`);
+    this.tabla = tabla;
+    this.indice = indice;
+    this.clave = clave;
+    this.aplicados = aplicados;
+    this.rechazadosPorAntiguedad = rechazadosPorAntiguedad;
+    this.causa = causa;
+  }
+}
+
 async function llamarRpc({ fetchImpl, url, anonKey, token, fn, body }) {
   const resp = await fetchImpl(`${url}/rest/v1/rpc/${fn}`, {
     method: "POST",
@@ -147,25 +165,41 @@ function imprimirTabla(filas, log) {
 async function subirRegistros({ fetchImpl, url, anonKey, token, registros }) {
   let aplicados = 0;
   let rechazadosPorAntiguedad = 0;
-  for (const r of registros) {
-    const { aplicado } = await llamarRpc({
-      fetchImpl,
-      url,
-      anonKey,
-      token,
-      fn: "subir_registro_ejercicio",
-      body: {
-        p_slot: r.slot,
-        p_slug: r.exercise_slug,
-        p_fecha: r.logged_on,
-        p_peso: r.weight_kg,
-        p_series: r.sets,
-        p_reps: r.reps,
-        p_hecho: r.completed,
-        p_editado_en: r.editado_en,
-      },
-    });
-    if (aplicado) aplicados++;
+  for (let i = 0; i < registros.length; i++) {
+    const r = registros[i];
+    let resultado;
+    try {
+      resultado = await llamarRpc({
+        fetchImpl,
+        url,
+        anonKey,
+        token,
+        fn: "subir_registro_ejercicio",
+        body: {
+          p_slot: r.slot,
+          p_slug: r.exercise_slug,
+          p_fecha: r.logged_on,
+          p_peso: r.weight_kg,
+          p_series: r.sets,
+          p_reps: r.reps,
+          p_hecho: r.completed,
+          p_editado_en: r.editado_en,
+        },
+      });
+    } catch (e) {
+      if (e instanceof ErrorToken) throw e;
+      // Stop uploading blindly the moment one row fails — the caller reports
+      // exactly how far we got instead of racing through the remaining rows.
+      throw new ErrorSubida({
+        tabla: "exercise_logs",
+        indice: i,
+        clave: `${r.slot}|${r.logged_on}`,
+        aplicados,
+        rechazadosPorAntiguedad,
+        causa: e,
+      });
+    }
+    if (resultado.aplicado) aplicados++;
     else rechazadosPorAntiguedad++;
   }
   return { aplicados, rechazadosPorAntiguedad };
@@ -177,20 +211,34 @@ async function subirRegistros({ fetchImpl, url, anonKey, token, registros }) {
 async function subirPesos({ fetchImpl, url, anonKey, token, pesos }) {
   let aplicados = 0;
   let rechazadosPorAntiguedad = 0;
-  for (const p of pesos) {
-    const { aplicado } = await llamarRpc({
-      fetchImpl,
-      url,
-      anonKey,
-      token,
-      fn: "subir_peso_corporal",
-      body: {
-        p_fecha: p.measured_on,
-        p_kg: p.weight_kg,
-        p_editado_en: p.editado_en,
-      },
-    });
-    if (aplicado) aplicados++;
+  for (let i = 0; i < pesos.length; i++) {
+    const p = pesos[i];
+    let resultado;
+    try {
+      resultado = await llamarRpc({
+        fetchImpl,
+        url,
+        anonKey,
+        token,
+        fn: "subir_peso_corporal",
+        body: {
+          p_fecha: p.measured_on,
+          p_kg: p.weight_kg,
+          p_editado_en: p.editado_en,
+        },
+      });
+    } catch (e) {
+      if (e instanceof ErrorToken) throw e;
+      throw new ErrorSubida({
+        tabla: "body_weight",
+        indice: i,
+        clave: `${p.measured_on}`,
+        aplicados,
+        rechazadosPorAntiguedad,
+        causa: e,
+      });
+    }
+    if (resultado.aplicado) aplicados++;
     else rechazadosPorAntiguedad++;
   }
   return { aplicados, rechazadosPorAntiguedad };
@@ -352,6 +400,21 @@ export async function importar({
   } catch (e) {
     if (e instanceof ErrorToken) {
       error(e.message);
+      return 1;
+    }
+    if (e instanceof ErrorSubida) {
+      error(
+        `Subida detenida: falló ${e.tabla} en el índice ${e.indice} (${e.clave}).`
+      );
+      error(
+        `Antes de la falla: ${e.aplicados} aplicados, ${e.rechazadosPorAntiguedad} ` +
+          "ya estaban (aplicado:false — no cuentan como error)."
+      );
+      error(`Error de PostgREST: ${e.causa.message}`);
+      error(
+        "Re-correr este mismo script es seguro: los registros ya aplicados " +
+          "devolverán aplicado:false y no se vuelven a aplicar."
+      );
       return 1;
     }
     throw e;
